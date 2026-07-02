@@ -36,14 +36,14 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
-[project.urls]
-Homepage = "https://github.com/stephanos8926-lgtm/rapidwebs-sysstable"
-
 dependencies = [
     "psutil>=5.9.0",
     "pyyaml>=6.0",
     "click>=8.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/stephanos8926-lgtm/rapidwebs-sysstable"
 
 [project.scripts]
 sysstable = "sysstable.cli:cli"
