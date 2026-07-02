@@ -12,12 +12,13 @@ import time
 from pathlib import Path
 from typing import Any
 
+from . import utils
 from .collector import collect
 from .config import load_config
 from .database import MetricsDB
 from .events import dispatch_events
+from .socketd import SocketServer
 from .thresholds import Severity, evaluate_thresholds
-from .utils import get_violation_value
 
 logger = logging.getLogger("sysstable.daemon")
 _RUNNING = True
@@ -91,15 +92,20 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
     state_path = Path(config.get("state_path", "")).expanduser()
 
     db = MetricsDB(str(db_path))
+    socket_path = Path(config.get("socket_path", "")).expanduser()
+
+    sock_server = SocketServer(str(socket_path))
+    sock_server.start(str(db_path))
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
     logger.info(
-        "sysstabled starting — interval=%ds, retention=%dh, db=%s",
+        "sysstabled starting — interval=%ds, retention=%dh, db=%s, socket=%s",
         interval,
         retention,
         db_path,
+        socket_path,
     )
 
     cycle = 0
@@ -130,7 +136,7 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
                 state_path.write_text(json.dumps(state, indent=2))
 
                 for metric_name, severity in violations.items():
-                    value = get_violation_value(metric_name, metrics_dict)
+                    value = utils.get_violation_value(metric_name, metrics_dict)
                     if value is not None:
                         results = dispatch_events(
                             severity.value,
