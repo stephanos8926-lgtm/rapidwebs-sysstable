@@ -1,0 +1,16 @@
+name: rapidwebs-sysstable
+version: "0.1.0"
+description: |-
+  System stability awareness plugin for Hermes.
+
+  Reads sysstabled state.json and injects system-pressure context into
+  pre_llm_call (context warnings) and pre_tool_call (delegation blocks).
+  Configurable thresholds for RAM, CPU, disk, SWAP, and temperature.
+
+  Component of the RapidWebs-SysStable system stability monitor.
+author: "RapidWebs Enterprise (Lucien)"
+license: "MIT"
+tags: ["system", "stability", "monitoring", "thresholds", "rapidwebs"]
+hooks:
+  - pre_tool_call
+  - pre_llm_call

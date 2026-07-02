@@ -1,0 +1,14 @@
+[Unit]
+Description=RapidWebs SysStable — System Stability Monitor Daemon
+Documentation=https://github.com/stephanos8926-lgtm/rapidwebs-sysstable
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/sysstable start --foreground
+Restart=on-failure
+RestartSec=10
+Environment=SYSSTABLE_CONFIG_PATH=%h/.config/sysstable/config.yaml
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,17 @@
+services:
+  sysstable:
+    build: .
+    image: rapidwebs-sysstable:latest
+    container_name: rapidwebs-sysstable
+    volumes:
+      - /proc:/proc:ro
+      - /sys:/sys:ro
+      - sysstable-data:/home/sysstable/.cache/sysstable
+      - sysstable-config:/home/sysstable/.config/sysstable
+    pid: host
+    restart: unless-stopped
+    command: ["start", "--foreground"]
+
+volumes:
+  sysstable-data:
+  sysstable-config:

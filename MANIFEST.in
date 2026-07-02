@@ -1,0 +1,5 @@
+include *.toml
+recursive-include src/sysstable *.py
+recursive-include hermes-plugin *
+recursive-include docs *
+recursive-include tests *.py
