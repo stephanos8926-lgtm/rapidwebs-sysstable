@@ -17,7 +17,7 @@ maintainers = [
 ]
 keywords = [
     "system", "monitoring", "hermes", "plugin", "stability",
-    "daemon", "thresholds", "psutil", "devops"
+    "daemon", "thresholds", "psutil", "devops",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -38,9 +38,6 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/stephanos8926-lgtm/rapidwebs-sysstable"
-Documentation = "https://github.com/stephanos8926-lgtm/rapidwebs-sysstable"
-Issues = "https://github.com/stephanos8926-lgtm/rapidwebs-sysstable/issues"
-Changelog = "https://github.com/stephanos8926-lgtm/rapidwebs-sysstable/blob/main/CHANGELOG.md"
 
 dependencies = [
     "psutil>=5.9.0",
@@ -65,7 +62,6 @@ packages = ["src/sysstable"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-asyncio_mode = "auto"
 
 [tool.ruff]
 target-version = "py310"
@@ -74,6 +70,9 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "S"]
 ignore = ["S101"]  # Allow assert in tests
+
+[tool.ruff.lint.per-file-ignores]
+"hermes-plugin/**" = ["N999"]  # Plugin dir names use Hermes convention (dashes)
 
 [tool.ruff.format]
 quote-style = "double"

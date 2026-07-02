@@ -81,6 +81,7 @@ def _pre_tool_call(**kwargs: Any) -> dict[str, Any]:
     """Check system state before tool calls.
 
     Blocks delegate_task when system is in CRITICAL state.
+    On ORANGE, blocks the first attempt, allows retry.
     """
     try:
         state = _read_state()
@@ -92,8 +93,15 @@ def _pre_tool_call(**kwargs: Any) -> dict[str, Any]:
 
         if severity == "red":
             return {"block": True, "context": _severity_to_behavior("red")[1]}
+
         if severity == "orange":
-            return {"context": _severity_to_behavior("orange")[1]}
+            tracker_key = json.dumps(violations, sort_keys=True) if violations else "none"
+            if _ORANGE_RETRY_TRACKER.get(tracker_key):
+                _ORANGE_RETRY_TRACKER.pop(tracker_key, None)
+                return {"context": _severity_to_behavior("orange")[1]}
+            _ORANGE_RETRY_TRACKER[tracker_key] = True
+            return {"block": True, "context": _severity_to_behavior("orange")[1]}
+
         if severity == "yellow" and violations:
             return {"context": _severity_to_behavior("yellow")[1]}
 
@@ -138,7 +146,11 @@ def _pre_llm_call(**kwargs: Any) -> dict[str, str]:
 
 
 def _get_violation_value(metric_name: str, metrics: dict[str, Any]) -> Any:
-    """Extract the value for a given violation metric name."""
+    """Extract the value for a given violation metric name.
+
+    Note: Maintained duplicate of src/sysstable/utils.py:get_violation_value.
+    The plugin is a standalone Hermes package and cannot import from src/ at runtime.
+    """
     if not metrics:
         return None
     if metric_name == "ram_available_mb":

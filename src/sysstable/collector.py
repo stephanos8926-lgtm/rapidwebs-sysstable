@@ -30,6 +30,8 @@ class SystemMetrics:
     swap_total_mb: float = 0.0
     swap_used_mb: float = 0.0
     swap_percent: float = 0.0
+    swap_in_mb: float = 0.0
+    swap_out_mb: float = 0.0
 
     # CPU
     cpu_percent: float = 0.0
@@ -73,6 +75,8 @@ class SystemMetrics:
                 "total_mb": round(self.swap_total_mb, 1),
                 "used_mb": round(self.swap_used_mb, 1),
                 "percent": round(self.swap_percent, 1),
+                "in_mb": round(self.swap_in_mb, 1),
+                "out_mb": round(self.swap_out_mb, 1),
             },
             "cpu": {
                 "percent": round(self.cpu_percent, 1),
@@ -143,6 +147,8 @@ def collect() -> SystemMetrics:
     metrics.swap_total_mb = swap.total / (1024 * 1024)
     metrics.swap_used_mb = swap.used / (1024 * 1024)
     metrics.swap_percent = swap.percent
+    metrics.swap_in_mb = round(swap.sin / (1024 * 1024), 1) if swap.sin else 0.0
+    metrics.swap_out_mb = round(swap.sout / (1024 * 1024), 1) if swap.sout else 0.0
 
     # ── CPU ──
     metrics.cpu_percent = psutil.cpu_percent(interval=0.1)
@@ -155,11 +161,14 @@ def collect() -> SystemMetrics:
             for line in f:
                 if line.startswith("cpu "):
                     parts = line.split()
-                    if len(parts) >= 5:
-                        metrics.iowait_percent = 0.0  # simplified
+                    if len(parts) >= 6:
+                        cpu_fields = [int(p) for p in parts[1:]]
+                        total = sum(cpu_fields)
+                        iowait = cpu_fields[4] if len(cpu_fields) > 4 else 0
+                        metrics.iowait_percent = round((iowait / total * 100) if total > 0 else 0.0, 1)
                     break
-    except (OSError, ValueError):
-        pass
+    except (OSError, ValueError, IndexError):
+        logger.debug("Failed to parse /proc/stat for iowait")
 
     # ── DISK partitions ──
     partitions = []

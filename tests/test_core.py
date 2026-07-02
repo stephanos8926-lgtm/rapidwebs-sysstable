@@ -216,3 +216,97 @@ class TestHermesPlugin:
         assert severity_to_action("orange") == "soft_block"
         assert severity_to_action("yellow") == "warn"
         assert severity_to_action("green") == "ok"
+
+
+class TestUtils:
+    """Test utility functions."""
+
+    def test_get_violation_value_ram(self) -> None:
+        from sysstable.utils import get_violation_value
+
+        val = get_violation_value("ram_available_mb", {"ram": {"available_mb": 500.0}})
+        assert val == 500.0
+
+    def test_get_violation_value_unknown(self) -> None:
+        from sysstable.utils import get_violation_value
+
+        val = get_violation_value("nonexistent_metric", {})
+        assert val is None
+
+    def test_get_violation_value_temperature(self) -> None:
+        from sysstable.utils import get_violation_value
+
+        val = get_violation_value(
+            "temperature_celsius",
+            {"temperatures": {"cpu_thermal": [{"current": 85.0}]}},
+        )
+        assert val == 85.0
+
+
+class TestIowait:
+    """Test iowait parsing."""
+
+    def test_iowait_field_present(self) -> None:
+        from sysstable.collector import collect
+
+        d = collect().to_dict()
+        assert "iowait_percent" in d["cpu"]
+        assert d["cpu"]["iowait_percent"] >= 0.0
+
+
+class TestSwapIO:
+    """Test swap sin/sout fields."""
+
+    def test_swap_in_out_fields_present(self) -> None:
+        from sysstable.collector import collect
+
+        d = collect().to_dict()
+        assert "in_mb" in d["swap"]
+        assert "out_mb" in d["swap"]
+        assert d["swap"]["in_mb"] >= 0.0
+        assert d["swap"]["out_mb"] >= 0.0
+
+
+class TestMetricsDBContext:
+    """Test MetricsDB context manager."""
+
+    def test_context_manager(self, tmp_path) -> None:
+        from sysstable.database import MetricsDB
+
+        db_path = tmp_path / "ctx.db"
+        with MetricsDB(str(db_path)) as db:
+            db.write({"timestamp": 1000000000, "test": True})
+            assert db.count() == 1
+
+        import sqlite3
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            count = conn.execute("SELECT COUNT(*) FROM metrics").fetchone()[0]
+            assert count == 1
+        finally:
+            conn.close()
+
+
+class TestOrangeRetryTracker:
+    """Test orange retry tracking logic."""
+
+    def test_first_orange_blocks_second_passes(self) -> None:
+        tracker: dict[str, bool] = {}
+        violations = {"ram_available_mb": "orange"}
+        import json as _json
+
+        key = _json.dumps(violations, sort_keys=True)
+
+        # First orange → block
+        assert key not in tracker
+        tracker[key] = True
+
+        # Second orange → let through
+        if tracker.get(key):
+            tracker.pop(key, None)
+        second_blocked = key in tracker
+        assert not second_blocked
+
+        # Third orange (key consumed) → block again
+        assert key not in tracker

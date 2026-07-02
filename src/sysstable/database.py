@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -29,11 +30,17 @@ class MetricsDB:
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA_SQL)
 
+    def __enter__(self) -> MetricsDB:
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
+
     def write(self, metrics: dict[str, Any]) -> None:
         """Write a metrics snapshot."""
         self.conn.execute(
             "INSERT INTO metrics (timestamp_ns, data_json) VALUES (?, ?)",
-            (metrics["timestamp"], __import__("json").dumps(metrics)),
+            (metrics["timestamp"], json.dumps(metrics)),
         )
         self.conn.commit()
 
@@ -84,11 +91,9 @@ class MetricsDB:
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
-    import json as _json
-
     try:
-        data = _json.loads(row["data_json"])
-    except (_json.JSONDecodeError, TypeError, ValueError) as e:
+        data = json.loads(row["data_json"])
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
         data = {"error": str(e)}
     data["timestamp"] = row["timestamp_ns"]
     return data

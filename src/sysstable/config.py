@@ -8,7 +8,14 @@ from typing import Any
 
 import yaml
 
-DEFAULT_CONFIG_PATH = Path.home() / ".config" / "sysstable" / "config.yaml"
+
+def _config_dir() -> Path:
+    return Path.home() / ".config" / "sysstable"
+
+
+def default_config_path() -> Path:
+    return _config_dir() / "config.yaml"
+
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "interval_seconds": 15,
@@ -17,9 +24,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "state_path": str(Path.home() / ".hermes" / "plugins" / "rapidwebs-sysstable" / "state.json"),
     "socket_path": str(Path.home() / ".cache" / "sysstable" / "sysstable.sock"),
     "events": {
-        "shell_hooks_dir": str(Path.home() / ".config" / "sysstable" / "hooks.d"),
+        "shell_hooks_dir": str(_config_dir() / "hooks.d"),
         "webhooks": [],
-        "python_extensions_dir": str(Path.home() / ".config" / "sysstable" / "extensions.d"),
+        "python_extensions_dir": str(_config_dir() / "extensions.d"),
     },
     "thresholds": {
         "ram_available_mb": {"yellow": 1024, "orange": 512, "red": 256},
@@ -34,7 +41,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 def load_config(path: str | Path | None = None) -> dict[str, Any]:
     """Load YAML config, merging with defaults."""
     config = copy.deepcopy(DEFAULT_CONFIG)
-    config_path = Path(path).expanduser() if path else DEFAULT_CONFIG_PATH
+    config_path = Path(path).expanduser() if path else default_config_path()
 
     if config_path.exists():
         raw = yaml.safe_load(config_path.read_text())

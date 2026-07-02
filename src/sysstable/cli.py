@@ -11,7 +11,7 @@ from typing import Any
 
 import click
 
-from .config import DEFAULT_CONFIG_PATH, load_config
+from .config import default_config_path, load_config
 from .daemon import run_daemon
 from .database import MetricsDB
 from .socketd import query_daemon
@@ -34,7 +34,7 @@ def cli(ctx: click.Context, config: str | None) -> None:
 @click.pass_context
 def init(ctx: click.Context) -> None:
     """Initialize directories and create default config."""
-    config_path = Path(ctx.obj.get("config_path") or DEFAULT_CONFIG_PATH)
+    config_path = Path(ctx.obj.get("config_path") or default_config_path())
     config = load_config(str(config_path) if ctx.obj.get("config_path") else None)
 
     dirs = [
@@ -85,7 +85,10 @@ def start(ctx: click.Context, foreground: bool) -> None:
         except Exception as e:
             click.echo(f"Failed to start: {e}", err=True)
     else:
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        )
         click.echo("sysstabled running in foreground (Ctrl+C to stop)...")
         run_daemon(config_path=config_path, foreground=True)
 

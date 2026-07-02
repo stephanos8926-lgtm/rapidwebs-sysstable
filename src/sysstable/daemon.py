@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
+import os
 import signal
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -14,15 +17,57 @@ from .config import load_config
 from .database import MetricsDB
 from .events import dispatch_events
 from .thresholds import Severity, evaluate_thresholds
+from .utils import get_violation_value
 
 logger = logging.getLogger("sysstable.daemon")
 _RUNNING = True
+_PID_PATH = Path.home() / ".cache" / "sysstable" / "sysstabled.pid"
 
 
 def _handle_signal(signum: int, _frame: Any) -> None:
     global _RUNNING
     _RUNNING = False
     logger.info("Signal %d received, shutting down", signum)
+
+
+def _check_and_write_pid() -> bool:
+    """Check if daemon is already running. Returns True if OK to start."""
+    _PID_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if _PID_PATH.exists():
+        try:
+            old_pid = int(_PID_PATH.read_text().strip())
+            os.kill(old_pid, 0)
+            logger.warning("Daemon already running (PID %d)", old_pid)
+            return False
+        except (ProcessLookupError, OSError):
+            pass
+        except (ValueError, OSError):
+            pass
+    _PID_PATH.write_text(str(os.getpid()))
+    return True
+
+
+def _cleanup_pid() -> None:
+    """Remove PID file on shutdown."""
+    try:
+        if _PID_PATH.exists():
+            _PID_PATH.unlink()
+    except OSError:
+        pass
+
+
+def _setup_logging() -> None:
+    """Set up rotating file logging for the daemon."""
+    log_dir = Path.home() / ".cache" / "sysstable" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "sysstabled.log"
+
+    file_handler = logging.handlers.RotatingFileHandler(log_path, maxBytes=5_000_000, backupCount=3)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    root_logger = logging.getLogger()
+    root_logger.addHandler(file_handler)
+    root_logger.setLevel(logging.INFO)
+    logger.info("Logging to %s", log_path)
 
 
 def run_daemon(config_path: str | None = None, foreground: bool = False) -> None:
@@ -32,6 +77,12 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
         config_path: Override path to config YAML.
         foreground: If True, run in foreground (don't daemonize).
     """
+    _setup_logging()
+
+    if not _check_and_write_pid():
+        logger.error("Another daemon instance is running. Exiting.")
+        sys.exit(1)
+
     config = load_config(config_path)
     interval = config.get("interval_seconds", 15)
     retention = config.get("retention_hours", 72)
@@ -52,61 +103,63 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
     )
 
     cycle = 0
-    while _RUNNING:
-        try:
-            metrics = collect()
-            metrics_dict = metrics.to_dict()
+    try:
+        while _RUNNING:
+            try:
+                metrics = collect()
+                metrics_dict = metrics.to_dict()
 
-            # Write to SQLite
-            db.write(metrics_dict)
+                db.write(metrics_dict)
 
-            # Prune old data (every 10 cycles)
-            cycle += 1
-            if cycle % 10 == 0:
-                pruned = db.prune(retain_hours=retention)
-                if pruned:
-                    logger.info("Pruned %d old metric records", pruned)
+                cycle += 1
+                if cycle % 10 == 0:
+                    pruned = db.prune(retain_hours=retention)
+                    if pruned:
+                        logger.info("Pruned %d old metric records", pruned)
 
-            # Evaluate thresholds
-            threshold_configs = config.get("thresholds", {})
-            violations = evaluate_thresholds(metrics_dict, threshold_configs)
+                threshold_configs = config.get("thresholds", {})
+                violations = evaluate_thresholds(metrics_dict, threshold_configs)
 
-            # Write state.json
-            state = {
-                "timestamp": metrics_dict["timestamp"],
-                "metrics": metrics_dict,
-                "violations": {k: v.value for k, v in violations.items()},
-                "severity": _overall_severity(violations),
-            }
-            state_path.parent.mkdir(parents=True, exist_ok=True)
-            state_path.write_text(json.dumps(state, indent=2))
+                state = {
+                    "timestamp": metrics_dict["timestamp"],
+                    "metrics": metrics_dict,
+                    "violations": {k: v.value for k, v in violations.items()},
+                    "severity": _overall_severity(violations),
+                }
+                state_path.parent.mkdir(parents=True, exist_ok=True)
+                state_path.write_text(json.dumps(state, indent=2))
 
-            # Dispatch events for violations
-            for metric_name, severity in violations.items():
-                value = _get_violation_value(metric_name, metrics_dict)
-                if value is not None:
-                    results = dispatch_events(
-                        severity.value,
-                        metric_name,
-                        value,
-                        config,
-                        metrics_dict,
-                    )
-                    if results:
-                        logger.info("Events dispatched for %s=%s: %s", metric_name, severity.value, results)
+                for metric_name, severity in violations.items():
+                    value = get_violation_value(metric_name, metrics_dict)
+                    if value is not None:
+                        results = dispatch_events(
+                            severity.value,
+                            metric_name,
+                            value,
+                            config,
+                            metrics_dict,
+                        )
+                        if results:
+                            logger.info(
+                                "Events dispatched for %s=%s: %s",
+                                metric_name,
+                                severity.value,
+                                results,
+                            )
 
-            if not foreground:
-                time.sleep(interval)
-            elif _RUNNING:
-                # In foreground mode, loop doesn't sleep — runs continuously
-                time.sleep(interval)
+                if not foreground:
+                    time.sleep(interval)
+                elif _RUNNING:
+                    time.sleep(interval)
 
-        except Exception as e:
-            logger.error("Collection cycle failed: %s", e, exc_info=True)
-            if foreground:
-                time.sleep(interval)
+            except Exception as e:
+                logger.error("Collection cycle failed: %s", e, exc_info=True)
+                if foreground:
+                    time.sleep(interval)
+    finally:
+        _cleanup_pid()
+        db.close()
 
-    db.close()
     logger.info("sysstabled stopped")
 
 
@@ -119,24 +172,3 @@ def _overall_severity(violations: dict[str, Severity]) -> str:
     if any(v == Severity.YELLOW for v in violations.values()):
         return Severity.YELLOW.value
     return Severity.GREEN.value
-
-
-def _get_violation_value(metric_name: str, metrics: dict[str, Any]) -> float | None:
-    """Extract the numeric value that triggered a violation."""
-    if metric_name == "ram_available_mb":
-        return metrics.get("ram", {}).get("available_mb")
-    if metric_name == "cpu_load_15m":
-        return metrics.get("cpu", {}).get("load_15m")
-    if metric_name == "disk_root_free_mb":
-        for part in metrics.get("disk", {}).get("partitions", []):
-            if part.get("mountpoint") == "/":
-                return part.get("free_mb")
-    if metric_name == "swap_percent":
-        return metrics.get("swap", {}).get("percent")
-    if metric_name == "temperature_celsius":
-        max_temp = 0.0
-        for entries in metrics.get("temperatures", {}).values():
-            for entry in entries:
-                max_temp = max(max_temp, entry.get("current", 0))
-        return max_temp if max_temp > 0 else None
-    return None
