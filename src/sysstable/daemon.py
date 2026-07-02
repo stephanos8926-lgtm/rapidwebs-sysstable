@@ -163,6 +163,7 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
                 if foreground:
                     time.sleep(interval)
     finally:
+        sock_server.stop()
         _cleanup_pid()
         db.close()
 
