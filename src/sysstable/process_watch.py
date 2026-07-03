@@ -149,3 +149,124 @@ def snapshot_processes_to_db(
         return 0
 
     return db.save_process_snapshots(snapshots)
+
+
+# ── No-Kill Manager ─────────────────────────────────────────────────────
+
+HARD_CODED_NO_KILL: frozenset[str] = frozenset({
+    # Kernel / init
+    "init", "systemd", "kthreadd", "kworker/*", "ksoftirqd/*",
+    "migration/*", "watchdog/*", "rcu*", "mm_percpu_wq",
+    # System critical
+    "systemd-journald", "systemd-logind", "systemd-udevd",
+    "systemd-resolved", "systemd-timesyncd", "systemd-oomd",
+    "dbus-daemon", "dbus-broker",
+    # This daemon
+    "sysstable", "sysstabled",
+    # Security
+    "sshd", "login", "sudo", "polkitd",
+    # Container runtime
+    "dockerd", "containerd", "runc",
+})
+
+
+class NoKillManager:
+    """Three-layer protected-process manager.
+
+    Layers (evaluated first-match-wins):
+    1. HARD_CODED_NO_KILL — immutable set of system-critical processes
+    2. User config file — ``never_kill.user_list`` from config.yaml
+    3. CLI / ENV overrides — appended at runtime via ``--never-kill`` or
+       ``SYSTABLE_NEVER_KILL`` environment variable
+
+    Process identification uses **(pid, name, cmdline) triple matching**,
+    never PID alone. This prevents PID-recycling attacks where a new
+    malicious process inherits a protected PID after the original exits.
+    """
+
+    def __init__(self, user_list: list | None = None,
+                 cli_overrides: list | None = None,
+                 env_var: str | None = None):
+        self._user_names: set[str] = set(user_list or [])
+        self._cli_names: set[str] = set()
+        self._cli_pids: set[int] = set()
+
+        # Parse CLI overrides
+        for item in (cli_overrides or []):
+            item = item.strip()
+            if not item:
+                continue
+            try:
+                self._cli_pids.add(int(item))
+            except ValueError:
+                self._cli_names.add(item)
+
+        # Parse ENV overrides from SYSTABLE_NEVER_KILL
+        env_val = env_var or os.environ.get("SYSTABLE_NEVER_KILL", "")
+        if env_val:
+            for item in env_val.split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                try:
+                    pid = int(item)
+                    if pid <= 0:
+                        continue
+                    self._cli_pids.add(pid)
+                except ValueError:
+                    if item:
+                        self._cli_names.add(item)
+
+    @staticmethod
+    def validate_env_var(val: str) -> list[str]:
+        """Validate SYSTABLE_NEVER_KILL entries.
+
+        Returns list of validation warnings (empty = all valid).
+        """
+        warnings: list[str] = []
+        for item in val.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            try:
+                pid = int(item)
+                if pid <= 0:
+                    warnings.append(f"Invalid PID in SYSTABLE_NEVER_KILL: {item}")
+            except ValueError:
+                if len(item) < 2:
+                    warnings.append(f"Process name too short in SYSTABLE_NEVER_KILL: {item!r}")
+        return warnings
+
+    def is_protected(self, pid: int, name: str, cmdline: str) -> bool:
+        """Check if a process is protected (triple matching).
+
+        Matches on:
+        1. PID (if explicitly in CLI overrides)
+        2. Name against hard-coded + user + CLI name lists
+        3. Never matches PID alone against hard-coded/user sets (prevents
+           PID-recycling attacks)
+        """
+        # Layer 3a — CLI PID overrides (explicit PID = protected)
+        if pid in self._cli_pids:
+            return True
+
+        # Layers 1+2+3b — name matching
+        name_match = (name in self._user_names or
+                      name in self._cli_names or
+                      name in HARD_CODED_NO_KILL)
+        if name_match:
+            return True
+
+        return False
+
+    def get_protected_names(self) -> set[str]:
+        """Return all protected process names (for display)."""
+        result = set(HARD_CODED_NO_KILL)
+        result |= self._user_names
+        result |= self._cli_names
+        return result
+
+    @property
+    def protected_pids(self) -> set[int]:
+        """Return explicitly protected PIDs."""
+        return set(self._cli_pids)

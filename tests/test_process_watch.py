@@ -174,3 +174,109 @@ class TestSnapshotProcessesToDb:
         mock_db = MagicMock(spec=[])
         result = snapshot_processes_to_db([snap], mock_db)
         assert result == 0
+
+
+class TestNoKillManager:
+    """Test NoKillManager 3-layer protection."""
+
+    def test_hard_coded_system_processes(self) -> None:
+        from sysstable.process_watch import NoKillManager
+
+        mgr = NoKillManager()
+        assert mgr.is_protected(1, "systemd", "/lib/systemd")
+        assert mgr.is_protected(42, "sshd", "/usr/sbin/sshd")
+        assert mgr.is_protected(100, "dockerd", "/usr/bin/dockerd")
+        # Unknown process — not protected
+        assert not mgr.is_protected(500, "firefox", "/usr/bin/firefox")
+
+    def test_user_config_processes(self) -> None:
+        from sysstable.process_watch import NoKillManager
+
+        mgr = NoKillManager(user_list=["bash", "tmux"])
+        # Hard-coded still protected
+        assert mgr.is_protected(1, "systemd", "/lib/systemd")
+        # User config protected
+        assert mgr.is_protected(100, "bash", "/usr/bin/bash")
+        assert mgr.is_protected(200, "tmux", "/usr/bin/tmux")
+        # Not protected
+        assert not mgr.is_protected(300, "python3", "/usr/bin/python3")
+
+    def test_cli_override_by_pid(self) -> None:
+        from sysstable.process_watch import NoKillManager
+
+        mgr = NoKillManager(cli_overrides=["1234"])
+        assert mgr.is_protected(1234, "anything", "/bin/anything")
+        assert 1234 in mgr.protected_pids
+
+    def test_cli_override_by_name(self) -> None:
+        from sysstable.process_watch import NoKillManager
+
+        mgr = NoKillManager(cli_overrides=["myapp"])
+        assert mgr.is_protected(500, "myapp", "/usr/bin/myapp")
+
+    def test_env_override_by_pid(self) -> None:
+        from sysstable.process_watch import NoKillManager
+
+        mgr = NoKillManager(env_var="4321,5678")
+        assert mgr.is_protected(4321, "x", "/bin/x")
+        assert mgr.is_protected(5678, "y", "/bin/y")
+
+    def test_env_override_by_name(self) -> None:
+        from sysstable.process_watch import NoKillManager
+
+        mgr = NoKillManager(env_var="watchdog,agent")
+        assert mgr.is_protected(100, "watchdog", "/bin/watchdog")
+        assert mgr.is_protected(200, "agent", "/bin/agent")
+
+    def test_pid_recycling_prevented(self) -> None:
+        """A recycled PID should NOT match hard-coded/user name lists."""
+        from sysstable.process_watch import NoKillManager
+
+        mgr = NoKillManager(user_list=["bash"])
+        # PID 1 with name "bash" matches the user list entry
+        assert mgr.is_protected(1, "bash", "/usr/bin/bash")
+        # But PID 1 alone (name="evil") does NOT match — triple check prevents it
+        assert not mgr.is_protected(1, "evil", "/usr/bin/evil")
+
+    def test_get_protected_names_includes_all_layers(self) -> None:
+        from sysstable.process_watch import NoKillManager, HARD_CODED_NO_KILL
+
+        mgr = NoKillManager(user_list=["myapp"], cli_overrides=["otherapp"])
+        names = mgr.get_protected_names()
+        assert "systemd" in names  # hard-coded
+        assert "myapp" in names     # user config
+        assert "otherapp" in names  # CLI
+
+    def test_env_var_validation(self) -> None:
+        from sysstable.process_watch import NoKillManager
+
+        # Valid
+        assert NoKillManager.validate_env_var("1234,bash") == []
+        # Invalid PID
+        warns = NoKillManager.validate_env_var("-1")
+        assert len(warns) == 1
+        assert "Invalid PID" in warns[0]
+        # Too-short name
+        warns = NoKillManager.validate_env_var("a")
+        assert len(warns) == 1
+        assert "too short" in warns[0]
+
+    def test_empty_env_var_no_crash(self) -> None:
+        from sysstable.process_watch import NoKillManager
+
+        mgr = NoKillManager(env_var="")
+        assert mgr.protected_pids == set()
+
+    def test_env_and_cli_and_config_stack(self) -> None:
+        from sysstable.process_watch import NoKillManager
+
+        mgr = NoKillManager(
+            user_list=["bash"],
+            cli_overrides=["chrome"],
+            env_var="firefox",
+        )
+        assert mgr.is_protected(1, "systemd", "")    # hard-coded
+        assert mgr.is_protected(10, "bash", "")       # user config
+        assert mgr.is_protected(20, "chrome", "")     # CLI
+        assert mgr.is_protected(30, "firefox", "")    # ENV
+        assert not mgr.is_protected(99, "unknown", "")  # not protected
