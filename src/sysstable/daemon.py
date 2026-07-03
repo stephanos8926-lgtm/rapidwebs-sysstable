@@ -17,7 +17,14 @@ from .collector import collect
 from .config import load_config
 from .database import MetricsDB
 from .events import dispatch_events
+from .process_watch import (
+    fetch_all_processes,
+    snapshot_processes_to_db,
+    NoKillManager,
+    KillListGenerator,
+)
 from .socketd import SocketServer
+from .state_machine import PressureState, PressureStateMachine
 from .thresholds import Severity, evaluate_thresholds
 
 logger = logging.getLogger("sysstable.daemon")
@@ -94,6 +101,17 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
     db = MetricsDB(str(db_path))
     socket_path = Path(config.get("socket_path", "")).expanduser()
 
+    # Initialize memory pressure subsystems
+    no_kill_mgr = NoKillManager(user_list=config.get("never_kill", {}).get("user_list"))
+    kill_list_gen = KillListGenerator(config, no_kill_mgr, db)
+    state_machine = PressureStateMachine(config)
+    mem_cfg = config.get("memory_pressure", {})
+    process_snap_interval = int(mem_cfg.get("process_snapshot_interval", 60))
+    normal_snap_interval = int(mem_cfg.get("normal_snapshot_interval", 300))
+    critical_threshold = float(mem_cfg.get("critical_threshold_mb", 128))
+    _last_snap_time = 0  # track snapshot timing by cycle count
+    _last_normal_snap_time = 0
+
     sock_server = SocketServer(str(socket_path))
     sock_server.start(str(db_path))
 
@@ -153,6 +171,34 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
                                 results,
                             )
 
+                # ── Memory Pressure Resolution ────────────────────────────
+                ram_avail = utils.get_violation_value("ram_available_mb", metrics_dict) or 9999.0
+                current_state = state_machine.update(ram_avail, critical_threshold)
+
+                # Snapshot collection (on timer, not every cycle)
+                if current_state != PressureState.NORMAL:
+                    elapsed = (time.time() - _last_snap_time) * 1000
+                    if elapsed >= process_snap_interval:
+                        snaps = fetch_all_processes(lightweight=False)
+                        count = snapshot_processes_to_db(snaps, db)
+                        if count:
+                            logger.info("Collected %d process snapshots (pressure)", count)
+                        kill_list_gen.regenerate(snaps)
+                        _last_snap_time = time.time()
+                else:
+                    elapsed = (time.time() - _last_normal_snap_time) * 1000
+                    rate = normal_snap_interval * 1000  # convert seconds to ms
+                    if rate > 0 and elapsed >= rate:
+                        snaps = fetch_all_processes(lightweight=True)
+                        count = snapshot_processes_to_db(snaps, db)
+                        if count:
+                            logger.debug("Collected %d lightweight snapshots (normal)", count)
+                        _last_normal_snap_time = time.time()
+
+                if state_machine.should_fire_resolution():
+                    logger.warning("Memory pressure countdown expired — ready for resolution")
+                    # P8 resolver will be wired here when built
+
                 if not foreground:
                     time.sleep(interval)
                 elif _RUNNING:
@@ -172,6 +218,8 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
 
 def _overall_severity(violations: dict[str, Severity]) -> str:
     """Get the highest severity from all violations."""
+    if any(v == Severity.CRITICAL for v in violations.values()):
+        return Severity.CRITICAL.value
     if any(v == Severity.RED for v in violations.values()):
         return Severity.RED.value
     if any(v == Severity.ORANGE for v in violations.values()):
