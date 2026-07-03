@@ -18,8 +18,8 @@ from typing import Any
 
 logger = logging.getLogger("rapidwebs-sysstable")
 
-version = "0.1.0"
-description = "System stability awareness — reads sysstabled state.json and injects pressure context"
+version = "0.2.0"
+description = "System stability awareness + critical memory pressure resolution hooks"
 author = "RapidWebs (Lucien)"
 license = "MIT"
 tags = ["system", "stability", "monitoring", "thresholds", "rapidwebs"]
@@ -67,6 +67,12 @@ def _severity_to_behavior(severity: str) -> tuple[str, str]:
             "Consider reducing parallel operations. "
             "This call will proceed if retried.",
         )
+    if severity == "critical":
+        return (
+            "block",
+            "🚨  CRITICAL SYSTEM PRESSURE — memory critically low, active resolution in progress. "
+            "All subagent delegation is blocked until pressure subsides.",
+        )
     if severity == "red":
         return (
             "block",
@@ -90,6 +96,9 @@ def _pre_tool_call(**kwargs: Any) -> dict[str, Any]:
 
         severity = state.get("severity", "green")
         violations = state.get("violations", {})
+
+        if severity == "critical":
+            return {"block": True, "context": _severity_to_behavior("critical")[1]}
 
         if severity == "red":
             return {"block": True, "context": _severity_to_behavior("red")[1]}
@@ -124,10 +133,13 @@ def _pre_llm_call(**kwargs: Any) -> dict[str, str]:
 
         violations = state.get("violations", {})
         metrics = state.get("metrics", {})
+        resolution_active = state.get("resolution_active", False)
 
         lines = ["[SYSTEM STATUS]"]
 
-        if severity == "red":
+        if severity == "critical":
+            lines.append("🚨 CRITICAL — Memory pressure critical, resolution in progress")
+        elif severity == "red":
             lines.append("🚨 CRITICAL — Resources critically low")
         elif severity == "orange":
             lines.append("⚠️  HIGH — System under significant pressure")

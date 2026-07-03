@@ -149,6 +149,8 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
                     "metrics": metrics_dict,
                     "violations": {k: v.value for k, v in violations.items()},
                     "severity": _overall_severity(violations),
+                    "resolution_active": False,
+                    "resolution_info": None,
                 }
                 state_path.parent.mkdir(parents=True, exist_ok=True)
                 state_path.write_text(json.dumps(state, indent=2))
