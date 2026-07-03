@@ -2,15 +2,19 @@
 
 from unittest.mock import MagicMock, patch
 
-from sysstable.resolver import MemoryPressureResolver, ResolutionResult
+from sysstable.resolver import MemoryPressureResolver
 
 
-def _make_entry(pid=1001, name="test", score=0.9, mem_mb=200.0,
-                cpu=50.0, reason="high_mem"):
-    from sysstable.process_watch import KillListEntryScore, KillListEntry
+def _make_entry(pid=1001, name="test", score=0.9, mem_mb=200.0, cpu=50.0, reason="high_mem"):
+    from sysstable.process_watch import KillListEntryScore
+
     return KillListEntryScore(
-        pid=pid, name=name, cmdline=f"/usr/bin/{name}",
-        score=score, memory_mb=mem_mb, cpu_percent=cpu,
+        pid=pid,
+        name=name,
+        cmdline=f"/usr/bin/{name}",
+        score=score,
+        memory_mb=mem_mb,
+        cpu_percent=cpu,
         reason=reason,
     )
 
@@ -96,6 +100,7 @@ def test_full_resolve_cycle(mock_pause, mock_kill, mock_ram):
 def test_kill_permission_error(mock_proc_class):
     resolver = MemoryPressureResolver({}, object())
     import psutil
+
     mock_proc = MagicMock()
     mock_proc.is_running.return_value = True
     mock_proc.send_signal.side_effect = psutil.AccessDenied()

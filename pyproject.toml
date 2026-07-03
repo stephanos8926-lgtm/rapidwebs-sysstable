@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rapidwebs-sysstable"
-version = "0.1.0"
-description = "System stability monitor with Hermes integration — daemon, CLI, plugin"
+version = "0.2.0"
+description = "System stability monitor with Hermes integration — daemon, CLI, plugin, and critical memory pressure resolution"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -73,6 +73,7 @@ ignore = ["S101"]  # Allow assert in tests
 
 [tool.ruff.lint.per-file-ignores]
 "hermes-plugin/**" = ["N999"]  # Plugin dir names use Hermes convention (dashes)
+"src/sysstable/resolver.py" = ["S603", "S607"]  # systemctl calls are controlled strings
 
 [tool.ruff.format]
 quote-style = "double"

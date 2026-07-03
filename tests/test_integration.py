@@ -22,22 +22,30 @@ class TestFullCriticalMemoryLifecycle:
 
     def _make_snap(self, pid, name, mem_mb, cpu=5.0):
         from sysstable.process_watch import ProcessSnapshot
+
         return ProcessSnapshot(
-            pid=pid, name=name, cmdline=f"/usr/bin/{name}",
-            create_time=1000.0, memory_rss_mb=mem_mb,
+            pid=pid,
+            name=name,
+            cmdline=f"/usr/bin/{name}",
+            create_time=1000.0,
+            memory_rss_mb=mem_mb,
             memory_percent=mem_mb / 1024 * 100,
-            cpu_percent=cpu, io_read_bytes=0, io_write_bytes=0,
-            status="running", username="user",
+            cpu_percent=cpu,
+            io_read_bytes=0,
+            io_write_bytes=0,
+            status="running",
+            username="user",
         )
 
     @patch("sysstable.process_watch.psutil.process_iter")
     def test_full_lifecycle_with_resolution(self, mock_iter):
         """Run through the complete lifecycle with all components."""
-        from sysstable.state_machine import PressureStateMachine, PressureState
         from sysstable.process_watch import (
-            NoKillManager, KillListGenerator, fetch_all_processes,
+            KillListGenerator,
+            NoKillManager,
         )
         from sysstable.resolver import MemoryPressureResolver
+        from sysstable.state_machine import PressureState, PressureStateMachine
 
         # ── Setup ────────────────────────────────────────────────────
         mock_iter.return_value = []
@@ -71,10 +79,13 @@ class TestFullCriticalMemoryLifecycle:
         }
         import time
 
-        db = MagicMock(spec=[
-            "save_process_snapshots", "save_kill_list_generation",
-            "save_resolution_event",
-        ])
+        db = MagicMock(
+            spec=[
+                "save_process_snapshots",
+                "save_kill_list_generation",
+                "save_resolution_event",
+            ]
+        )
         db.save_process_snapshots.return_value = 3
         db.save_kill_list_generation.return_value = 1
         db.save_resolution_event.return_value = 1
@@ -117,9 +128,11 @@ class TestFullCriticalMemoryLifecycle:
         # ── Step 7: Execute resolution ─────────────────────────────
         resolver = MemoryPressureResolver(config, db)
         # Mock resolution to succeed
-        with patch.object(resolver, "_kill_process", return_value=True), \
-             patch.object(resolver, "_pause_process", return_value=True), \
-             patch("sysstable.resolver.psutil.virtual_memory") as mock_ram:
+        with (
+            patch.object(resolver, "_kill_process", return_value=True),
+            patch.object(resolver, "_pause_process", return_value=True),
+            patch("sysstable.resolver.psutil.virtual_memory") as mock_ram,
+        ):
             mock_ram.return_value.available = 500 * 1024 * 1024  # 500MB freed
 
             result = resolver.resolve(kill_list, 200.0)
@@ -143,18 +156,16 @@ class TestFullCriticalMemoryLifecycle:
     @patch("sysstable.process_watch.psutil.process_iter")
     def test_manual_intervention_after_max_retries(self, mock_iter):
         """When resolution fails 3 times, system enters MANUAL_INTERVENTION."""
-        from sysstable.state_machine import PressureStateMachine, PressureState
-        from sysstable.process_watch import NoKillManager, KillListGenerator
+        from sysstable.process_watch import KillListGenerator, NoKillManager
         from sysstable.resolver import MemoryPressureResolver
+        from sysstable.state_machine import PressureState, PressureStateMachine
 
         mock_iter.return_value = []
 
         config = {
             "memory_pressure": {"confirmation_intervals": 1, "countdown_seconds": 0.005},
-            "resolution": {"max_resolution_cycles": 3, "min_freed_memory_mb": 64,
-                           "sigterm_timeout_seconds": 1},
-            "process_scoring": {"memory_weight": 1.0, "cpu_weight": 0.0,
-                                "io_weight": 0.0, "history_weight": 0.0},
+            "resolution": {"max_resolution_cycles": 3, "min_freed_memory_mb": 64, "sigterm_timeout_seconds": 1},
+            "process_scoring": {"memory_weight": 1.0, "cpu_weight": 0.0, "io_weight": 0.0, "history_weight": 0.0},
             "never_kill": {"user_list": []},
         }
         import time
@@ -175,14 +186,16 @@ class TestFullCriticalMemoryLifecycle:
             sm.update(50.0, critical_threshold_mb=128)  # → CRITICAL_DETECTED
             sm.update(50.0, critical_threshold_mb=128)  # → CONFIRMING
             sm.update(50.0, critical_threshold_mb=128)  # → COUNTDOWN
-            time.sleep(0.01)                             # Let countdown expire
+            time.sleep(0.01)  # Let countdown expire
             sm.update(50.0, critical_threshold_mb=128)  # → RESOLVING
             assert sm.get_state() == PressureState.RESOLVING
 
             kill_list = gen.regenerate([snap])
-            with patch.object(resolver, "_kill_process", return_value=True), \
-                 patch.object(resolver, "_pause_process", return_value=True), \
-                 patch("sysstable.resolver.psutil.virtual_memory") as mock_ram:
+            with (
+                patch.object(resolver, "_kill_process", return_value=True),
+                patch.object(resolver, "_pause_process", return_value=True),
+                patch("sysstable.resolver.psutil.virtual_memory") as mock_ram,
+            ):
                 # Simulate insufficient memory freed
                 mock_ram.return_value.available = 50 * 1024 * 1024
                 result = resolver.resolve(kill_list, 80.0)

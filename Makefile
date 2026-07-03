@@ -1,4 +1,4 @@
-.PHONY: install test lint format check clean
+.PHONY: install test test-all lint format format-check check clean build plugin-install
 
 install:
 	uv venv && source .venv/bin/activate && uv pip install -e ".[dev]"
@@ -29,31 +29,7 @@ clean:
 build:
 	source .venv/bin/activate && python -m build
 
-publish: build
-	source .venv/bin/activate && twine upload dist/*
-
-.PHONY: docker-build docker-run
-docker-build:
-	docker build -t rapidwebs-sysstable .
-
-docker-run:
-	docker run --rm -it \
-		-v /proc:/proc:ro \
-		-v /sys:/sys:ro \
-		--pid=host \
-		rapidwebs-sysstable status
-
-# Systemd service management
-.PHONY: service-install service-enable service-status service-stop
-service-install:
-	cp docs/sysstable.service ~/.config/systemd/user/
-	systemctl --user daemon-reload
-
-service-enable: service-install
-	systemctl --user enable --now sysstable
-
-service-status:
-	systemctl --user status sysstable
-
-service-stop:
-	systemctl --user stop sysstable
+plugin-install:
+	@echo "Installing Hermes plugin..."
+	@chmod +x hermes-plugin/rapidwebs-sysstable/install.sh
+	@./hermes-plugin/rapidwebs-sysstable/install.sh

@@ -128,11 +128,9 @@ class MetricsDB:
 
     # ── Kill List Generations ────────────────────────────────────────────
 
-    def save_kill_list_generation(self, trigger: str, entries_json: str,
-                                   mem_avail_mb: float = 0.0) -> int:
+    def save_kill_list_generation(self, trigger: str, entries_json: str, mem_avail_mb: float = 0.0) -> int:
         self.conn.execute(
-            "INSERT INTO kill_list_generations (timestamp_ns, trigger, entries_json, mem_avail_mb) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO kill_list_generations (timestamp_ns, trigger, entries_json, mem_avail_mb) VALUES (?, ?, ?, ?)",
             (time.time_ns(), trigger, entries_json, mem_avail_mb),
         )
         self.conn.commit()
@@ -147,10 +145,15 @@ class MetricsDB:
 
     # ── Resolution Events ────────────────────────────────────────────────
 
-    def save_resolution_event(self, action: str, pid: int, name: str,
-                               signal: str | None = None,
-                               success: bool = False,
-                               details: str | None = None) -> int:
+    def save_resolution_event(
+        self,
+        action: str,
+        pid: int,
+        name: str,
+        signal: str | None = None,
+        success: bool = False,
+        details: str | None = None,
+    ) -> int:
         self.conn.execute(
             "INSERT INTO resolution_events (timestamp_ns, action, pid, name, signal, success, details) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -177,17 +180,25 @@ class MetricsDB:
                 "(timestamp_ns, pid, name, cmdline, memory_rss_mb, memory_percent, "
                 " cpu_percent, io_read_bytes, io_write_bytes, status, username) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (now, snap.pid, snap.name, snap.cmdline,
-                 snap.memory_rss_mb, snap.memory_percent,
-                 snap.cpu_percent, snap.io_read_bytes, snap.io_write_bytes,
-                 snap.status, snap.username),
+                (
+                    now,
+                    snap.pid,
+                    snap.name,
+                    snap.cmdline,
+                    snap.memory_rss_mb,
+                    snap.memory_percent,
+                    snap.cpu_percent,
+                    snap.io_read_bytes,
+                    snap.io_write_bytes,
+                    snap.status,
+                    snap.username,
+                ),
             )
             count += 1
         self.conn.commit()
         return count
 
-    def query_process_snapshots(self, pid: int, name: str,
-                                 hours: int = 1) -> list[dict[str, Any]]:
+    def query_process_snapshots(self, pid: int, name: str, hours: int = 1) -> list[dict[str, Any]]:
         cutoff_ns = time.time_ns() - (hours * 3600 * 1_000_000_000)
         rows = self.conn.execute(
             "SELECT * FROM process_snapshots "

@@ -1,0 +1,69 @@
+name: Smoke Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
+
+      - name: Build package
+        run: |
+          uv venv
+          source .venv/bin/activate
+          uv pip install build
+          python -m build
+
+      - name: Install from built wheel
+        run: |
+          source .venv/bin/activate
+          uv pip install dist/*.whl
+
+      - name: Smoke test — CLI help
+        run: |
+          source .venv/bin/activate
+          sysstable --help
+
+      - name: Smoke test — subcommand exists
+        run: |
+          source .venv/bin/activate
+          sysstable init --help
+          sysstable start --help
+          sysstable status --help
+          sysstable history --help
+          sysstable trend --help
+          sysstable kill-list --help
+          sysstable processes --help
+          sysstable never-kill --help
+          sysstable resolution-history --help
+          sysstable uninstall --help
+
+      - name: Smoke test — import check
+        run: |
+          source .venv/bin/activate
+          python3 -c "from sysstable import thresholds, config, collector, database, events, daemon, socketd, cli, process_watch, state_machine, resolver; print('All modules import OK')"
+
+      - name: Smoke test — plugin imports
+        run: |
+          source .venv/bin/activate
+          python3 -c "import sys; sys.path.insert(0, 'hermes-plugin'); from rapidwebs_sysstable import register; print('Plugin imports OK')"

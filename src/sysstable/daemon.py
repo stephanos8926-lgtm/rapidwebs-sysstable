@@ -18,10 +18,10 @@ from .config import load_config
 from .database import MetricsDB
 from .events import dispatch_events
 from .process_watch import (
+    KillListGenerator,
+    NoKillManager,
     fetch_all_processes,
     snapshot_processes_to_db,
-    NoKillManager,
-    KillListGenerator,
 )
 from .socketd import SocketServer
 from .state_machine import PressureState, PressureStateMachine

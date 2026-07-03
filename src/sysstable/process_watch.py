@@ -12,7 +12,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
 
 import psutil
 
@@ -79,14 +79,25 @@ def fetch_all_processes(
     collected = 0
     errors = 0
 
-    attrs = ["pid", "name", "cmdline", "cpu_percent", "memory_info",
-             "memory_percent", "io_counters", "status", "create_time", "username"]
+    attrs = [
+        "pid",
+        "name",
+        "cmdline",
+        "cpu_percent",
+        "memory_info",
+        "memory_percent",
+        "io_counters",
+        "status",
+        "create_time",
+        "username",
+    ]
 
     for proc in psutil.process_iter(attrs):
         if time.monotonic() > deadline:
             logger.warning(
                 "Process collection timed out after %.1fs — collected %d processes",
-                timeout, collected,
+                timeout,
+                collected,
             )
             break
 
@@ -153,21 +164,41 @@ def snapshot_processes_to_db(
 
 # ── No-Kill Manager ─────────────────────────────────────────────────────
 
-HARD_CODED_NO_KILL: frozenset[str] = frozenset({
-    # Kernel / init
-    "init", "systemd", "kthreadd", "kworker/*", "ksoftirqd/*",
-    "migration/*", "watchdog/*", "rcu*", "mm_percpu_wq",
-    # System critical
-    "systemd-journald", "systemd-logind", "systemd-udevd",
-    "systemd-resolved", "systemd-timesyncd", "systemd-oomd",
-    "dbus-daemon", "dbus-broker",
-    # This daemon
-    "sysstable", "sysstabled",
-    # Security
-    "sshd", "login", "sudo", "polkitd",
-    # Container runtime
-    "dockerd", "containerd", "runc",
-})
+HARD_CODED_NO_KILL: frozenset[str] = frozenset(
+    {
+        # Kernel / init
+        "init",
+        "systemd",
+        "kthreadd",
+        "kworker/*",
+        "ksoftirqd/*",
+        "migration/*",
+        "watchdog/*",
+        "rcu*",
+        "mm_percpu_wq",
+        # System critical
+        "systemd-journald",
+        "systemd-logind",
+        "systemd-udevd",
+        "systemd-resolved",
+        "systemd-timesyncd",
+        "systemd-oomd",
+        "dbus-daemon",
+        "dbus-broker",
+        # This daemon
+        "sysstable",
+        "sysstabled",
+        # Security
+        "sshd",
+        "login",
+        "sudo",
+        "polkitd",
+        # Container runtime
+        "dockerd",
+        "containerd",
+        "runc",
+    }
+)
 
 
 class NoKillManager:
@@ -184,15 +215,13 @@ class NoKillManager:
     malicious process inherits a protected PID after the original exits.
     """
 
-    def __init__(self, user_list: list | None = None,
-                 cli_overrides: list | None = None,
-                 env_var: str | None = None):
+    def __init__(self, user_list: list | None = None, cli_overrides: list | None = None, env_var: str | None = None):
         self._user_names: set[str] = set(user_list or [])
         self._cli_names: set[str] = set()
         self._cli_pids: set[int] = set()
 
         # Parse CLI overrides
-        for item in (cli_overrides or []):
+        for item in cli_overrides or []:
             item = item.strip()
             if not item:
                 continue
@@ -251,9 +280,7 @@ class NoKillManager:
             return True
 
         # Layers 1+2+3b — name matching
-        name_match = (name in self._user_names or
-                      name in self._cli_names or
-                      name in HARD_CODED_NO_KILL)
+        name_match = name in self._user_names or name in self._cli_names or name in HARD_CODED_NO_KILL
         if name_match:
             return True
 
@@ -321,8 +348,7 @@ class ProcessScorer:
 
     def _is_false_positive(self, snap: ProcessSnapshot) -> bool:
         """Heuristic: high memory but low CPU and low IO suggests cached data."""
-        cpu_mbps = snap.cpu_percent  # Using percent as proxy; could be refined
-        io_mbps = (snap.io_read_bytes + snap.io_write_bytes) / (1024 * 1024)  # per second? we need interval
+        (snap.io_read_bytes + snap.io_write_bytes) / (1024 * 1024)  # per second? we need interval
         # Since we don't have interval here, we'll use a simplistic check:
         # low CPU percent and low IO bytes (assuming collection interval is ~1s)
         return (
@@ -339,12 +365,7 @@ class ProcessScorer:
         io_score = self._io_score(snap.io_read_bytes, snap.io_write_bytes, interval_sec=1.0)
         hist = history_score
 
-        score = (
-            self.w_mem * mem_score
-            + self.w_cpu * cpu_score
-            + self.w_io * io_score
-            + self.w_hist * hist
-        )
+        score = self.w_mem * mem_score + self.w_cpu * cpu_score + self.w_io * io_score + self.w_hist * hist
 
         if self._is_false_positive(snap):
             score *= self.fp_penalty
@@ -358,6 +379,7 @@ class ProcessScorer:
 
 class KillListEntryScore(KillListEntry):
     """KillListEntry with a computed score (for sorting)."""
+
     pass
 
 
@@ -383,10 +405,7 @@ class KillListGenerator:
         5. Return the ordered kill list.
         """
         # 1. Filter
-        candidates = [
-            s for s in snapshots
-            if not self.no_kill_mgr.is_protected(s.pid, s.name, s.cmdline)
-        ]
+        candidates = [s for s in snapshots if not self.no_kill_mgr.is_protected(s.pid, s.name, s.cmdline)]
 
         # 2. Score
         history = self.scorer._history_score(candidates)  # placeholder until DB history
@@ -426,6 +445,7 @@ class KillListGenerator:
 
         # Build a simple JSON-serializable representation
         import json
+
         entries_json = [
             {
                 "pid": e.pid,

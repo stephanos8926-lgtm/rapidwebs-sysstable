@@ -45,8 +45,7 @@ class PressureStateMachine:
         self._recovered_cooldown_until: int | None = None
         self._resolution_cycle_count = 0
 
-    def update(self, ram_available_mb: float,
-               critical_threshold_mb: float = 128.0) -> PressureState:
+    def update(self, ram_available_mb: float, critical_threshold_mb: float = 128.0) -> PressureState:
         """Advance the state machine based on current RAM availability.
 
         Args:
@@ -74,9 +73,7 @@ class PressureStateMachine:
 
         if not is_critical:
             # Recover
-            if self._state in (PressureState.CRITICAL_DETECTED,
-                               PressureState.CONFIRMING,
-                               PressureState.COUNTDOWN):
+            if self._state in (PressureState.CRITICAL_DETECTED, PressureState.CONFIRMING, PressureState.COUNTDOWN):
                 self._state = PressureState.NORMAL
                 self._reset_counters()
             return self._state

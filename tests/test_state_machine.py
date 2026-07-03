@@ -1,6 +1,6 @@
 """Tests for the Pressure State Machine."""
 
-from sysstable.state_machine import PressureStateMachine, PressureState
+from sysstable.state_machine import PressureState, PressureStateMachine
 
 
 def test_initial_state_is_normal():
@@ -44,10 +44,12 @@ def test_resolve_on_success_goes_recovered():
 
 
 def test_resolve_on_failure_retries_then_manual():
-    sm = PressureStateMachine({
-        "memory_pressure": {},
-        "resolution": {"max_resolution_cycles": 3},
-    })
+    sm = PressureStateMachine(
+        {
+            "memory_pressure": {},
+            "resolution": {"max_resolution_cycles": 3},
+        }
+    )
     for _ in range(3):
         assert sm.get_state() != PressureState.MANUAL_INTERVENTION
         sm.on_resolution_complete(success=False)
@@ -63,10 +65,12 @@ def test_manual_intervention_stays_forever():
 
 
 def test_full_lifecycle():
-    sm = PressureStateMachine({
-        "memory_pressure": {"confirmation_intervals": 3, "countdown_seconds": 0.01},
-        "resolution": {"max_resolution_cycles": 3},
-    })
+    sm = PressureStateMachine(
+        {
+            "memory_pressure": {"confirmation_intervals": 3, "countdown_seconds": 0.01},
+            "resolution": {"max_resolution_cycles": 3},
+        }
+    )
     import time
 
     # Step through the whole lifecycle

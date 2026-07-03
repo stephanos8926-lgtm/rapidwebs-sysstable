@@ -7,7 +7,6 @@ NoKillManager for process protection checks.
 from __future__ import annotations
 
 import logging
-import os
 import signal
 import subprocess
 import time
@@ -57,8 +56,7 @@ class MemoryPressureResolver:
 
     # ── Public API ───────────────────────────────────────────────────────
 
-    def resolve(self, kill_list_entries: list[Any],
-                current_ram_mb: float) -> ResolutionResult:
+    def resolve(self, kill_list_entries: list[Any], current_ram_mb: float) -> ResolutionResult:
         """Execute a resolution cycle on the given kill list.
 
         Re-entrance guard prevents concurrent resolutions. Called by
@@ -98,19 +96,14 @@ class MemoryPressureResolver:
             if freed < self.min_freed_mb:
                 logger.warning(
                     "Only %d MB freed (min %d MB) — marking as unsuccessful",
-                    freed, self.min_freed_mb,
+                    freed,
+                    self.min_freed_mb,
                 )
                 result.success = False
-                result.action_summary = (
-                    f"INSUFFICIENT: {freed}MB freed < {self.min_freed_mb}MB min"
-                )
+                result.action_summary = f"INSUFFICIENT: {freed}MB freed < {self.min_freed_mb}MB min"
             else:
                 result.success = True
-                result.action_summary = (
-                    f"OK: killed {result.kill_count}, "
-                    f"paused {result.pause_count}, "
-                    f"freed {freed}MB"
-                )
+                result.action_summary = f"OK: killed {result.kill_count}, paused {result.pause_count}, freed {freed}MB"
 
             self._log_resolution_event(result, ram_before, ram_after)
             return result
@@ -120,8 +113,7 @@ class MemoryPressureResolver:
 
     # ── Internal Resolution ──────────────────────────────────────────────
 
-    def _execute_resolution(self, entries: list[Any],
-                            details: list[dict[str, Any]]) -> ResolutionResult:
+    def _execute_resolution(self, entries: list[Any], details: list[dict[str, Any]]) -> ResolutionResult:
         """Execute the kill/pause/unpause schedule.
 
         Strategy (from spec):
@@ -133,9 +125,7 @@ class MemoryPressureResolver:
            position 4: wait L*(U-2) → SIGCONT
            (L = pause_duration)
         """
-        result = ResolutionResult(success=True, action_summary="",
-                                  kill_count=0, pause_count=0,
-                                  details=details)
+        result = ResolutionResult(success=True, action_summary="", kill_count=0, pause_count=0, details=details)
 
         if not entries:
             return result
@@ -165,12 +155,13 @@ class MemoryPressureResolver:
         #    Reverse linear: position i waits L * (U - i + 1)
         unpause_delays = []
         for i, entry in enumerate(paused):
-            idx = i + 2  # position in kill list (1-indexed)
+            i + 2  # position in kill list (1-indexed)
             delay = self.pause_duration * (self.pause_count - i)
             unpause_delays.append((entry, delay))
 
         # Fire-and-forget unpause threads
         import threading
+
         for entry, delay in unpause_delays:
             t = threading.Timer(delay, self._unpause_process, args=[entry, details])
             t.daemon = True
@@ -190,8 +181,7 @@ class MemoryPressureResolver:
             return signal.SIGTERM  # systemctl stop is done separately
         return signal.SIGTERM
 
-    def _kill_process(self, entry: Any, sig: int,
-                      details: list[dict[str, Any]]) -> bool:
+    def _kill_process(self, entry: Any, sig: int, details: list[dict[str, Any]]) -> bool:
         """Send SIGTERM, wait, then SIGKILL if still alive.
 
         For systemd-managed services, runs `systemctl --user stop` first.
@@ -207,19 +197,20 @@ class MemoryPressureResolver:
                 logger.info("Process %d (%s) already dead", entry.pid, entry.name)
                 return True
 
-            kill_tried = signal.Signals(sig).name if hasattr(signal, 'Signals') else str(sig)
-            logger.info("Sending %s to %d (%s — %.0fMB)",
-                        kill_tried, entry.pid, entry.name, entry.memory_mb)
+            kill_tried = signal.Signals(sig).name if hasattr(signal, "Signals") else str(sig)
+            logger.info("Sending %s to %d (%s — %.0fMB)", kill_tried, entry.pid, entry.name, entry.memory_mb)
 
             proc.send_signal(sig)
-            details.append({
-                "action": "kill",
-                "pid": entry.pid,
-                "name": entry.name,
-                "signal": kill_tried,
-                "memory_mb": entry.memory_mb,
-                "reason": entry.reason,
-            })
+            details.append(
+                {
+                    "action": "kill",
+                    "pid": entry.pid,
+                    "name": entry.name,
+                    "signal": kill_tried,
+                    "memory_mb": entry.memory_mb,
+                    "reason": entry.reason,
+                }
+            )
 
             # Wait for graceful shutdown
             deadline = time.monotonic() + self.sigterm_timeout
@@ -259,46 +250,51 @@ class MemoryPressureResolver:
 
     # ── Pause/Unpause ────────────────────────────────────────────────────
 
-    def _pause_process(self, entry: Any,
-                       details: list[dict[str, Any]]) -> bool:
+    def _pause_process(self, entry: Any, details: list[dict[str, Any]]) -> bool:
         """Send SIGSTOP to pause a process."""
         import psutil as _psutil
+
         try:
             proc = _psutil.Process(entry.pid)
             if not proc.is_running():
                 return False
             proc.send_signal(signal.SIGSTOP)
             logger.info("Paused process %d (%s)", entry.pid, entry.name)
-            details.append({
-                "action": "pause",
-                "pid": entry.pid,
-                "name": entry.name,
-            })
+            details.append(
+                {
+                    "action": "pause",
+                    "pid": entry.pid,
+                    "name": entry.name,
+                }
+            )
             return True
         except (_psutil.NoSuchProcess, _psutil.AccessDenied) as e:
             logger.warning("Failed to pause %d: %s", entry.pid, e)
             return False
 
-    def _unpause_process(self, entry: Any,
-                         details: list[dict[str, Any]]) -> None:
+    def _unpause_process(self, entry: Any, details: list[dict[str, Any]]) -> None:
         """Send SIGCONT to resume a paused process."""
         import psutil as _psutil
+
         try:
             proc = _psutil.Process(entry.pid)
             if proc.is_running():
                 proc.send_signal(signal.SIGCONT)
                 logger.info("Unpaused process %d (%s) after delay", entry.pid, entry.name)
-                details.append({
-                    "action": "unpause",
-                    "pid": entry.pid,
-                    "name": entry.name,
-                })
+                details.append(
+                    {
+                        "action": "unpause",
+                        "pid": entry.pid,
+                        "name": entry.name,
+                    }
+                )
                 self._log_resolution_event(
                     ResolutionResult(
                         success=True,
                         action_summary=f"unpause {entry.name}",
                     ),
-                    0, 0,
+                    0,
+                    0,
                     action="unpause",
                 )
         except (_psutil.NoSuchProcess, _psutil.AccessDenied) as e:
@@ -306,13 +302,14 @@ class MemoryPressureResolver:
 
     # ── Systemd ──────────────────────────────────────────────────────────
 
-    def _systemd_stop(self, name: str,
-                      details: list[dict[str, Any]]) -> bool:
+    def _systemd_stop(self, name: str, details: list[dict[str, Any]]) -> bool:
         """Stop a systemd user service."""
         try:
             subprocess.run(
-                ["systemctl", "--user", "stop", name],
-                capture_output=True, text=True, timeout=10,
+                ["systemctl", "--user", "stop", name],  # noqa: S603, S607
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             logger.info("Stopped systemd service: %s", name)
             details.append({"action": "systemd_stop", "name": name})
@@ -330,10 +327,9 @@ class MemoryPressureResolver:
         except Exception:
             return 0.0
 
-    def _log_resolution_event(self, result: ResolutionResult,
-                               ram_before: float = 0,
-                               ram_after: float = 0,
-                               action: str = "resolve") -> None:
+    def _log_resolution_event(
+        self, result: ResolutionResult, ram_before: float = 0, ram_after: float = 0, action: str = "resolve"
+    ) -> None:
         """Log a resolution event to the DB."""
         if not hasattr(self.db, "save_resolution_event"):
             return

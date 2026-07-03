@@ -16,9 +16,9 @@ from .config import default_config_path, load_config
 from .daemon import run_daemon
 from .database import MetricsDB
 from .process_watch import (
-    fetch_all_processes,
-    NoKillManager,
     HARD_CODED_NO_KILL,
+    NoKillManager,
+    fetch_all_processes,
 )
 from .socketd import query_daemon
 
@@ -268,7 +268,6 @@ def kill_list(ctx: click.Context, fmt: str, limit: int) -> None:
 @click.pass_context
 def processes(ctx: click.Context, sort_by: str, limit: int, watch: bool) -> None:
     """Show running processes sorted by resource usage."""
-    import psutil
 
     if watch:
         click.echo("Watching processes every 3s (Ctrl+C to stop)...")
@@ -285,9 +284,11 @@ def processes(ctx: click.Context, sort_by: str, limit: int, watch: bool) -> None
 
 def _print_process_list(snaps: list, sort_by: str) -> None:
     """Print a table of process snapshots."""
-    sort_key = {"memory": lambda s: s.memory_rss_mb,
-                 "cpu": lambda s: s.cpu_percent,
-                 "io": lambda s: s.io_read_bytes + s.io_write_bytes}
+    sort_key = {
+        "memory": lambda s: s.memory_rss_mb,
+        "cpu": lambda s: s.cpu_percent,
+        "io": lambda s: s.io_read_bytes + s.io_write_bytes,
+    }
     sorted_snaps = sorted(snaps, key=sort_key.get(sort_by, sort_key["memory"]), reverse=True)
 
     click.echo(f"{'PID':>7} {'Name':<16} {'Memory':>8} {'CPU%':>6} {'IO R/W':>12}")

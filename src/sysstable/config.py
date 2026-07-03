@@ -68,9 +68,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "never_kill": {
         "user_list": [
-            "sshd", "cron", "NetworkManager", "rsyslogd",
-            "polkitd", "systemd-journald", "login", "dbus-daemon",
-            "systemd-logind", "systemd-udevd",
+            "sshd",
+            "cron",
+            "NetworkManager",
+            "rsyslogd",
+            "polkitd",
+            "systemd-journald",
+            "login",
+            "dbus-daemon",
+            "systemd-logind",
+            "systemd-udevd",
         ],
     },
 }
