@@ -310,3 +310,84 @@ class TestOrangeRetryTracker:
 
         # Third orange (key consumed) → block again
         assert key not in tracker
+
+
+class TestCriticalSeverity:
+    """Test CRITICAL severity level (Phase 2 addition)."""
+
+    def test_critical_is_severity_member(self) -> None:
+        from sysstable.thresholds import Severity
+
+        assert Severity.CRITICAL == "critical"
+        assert Severity.CRITICAL.value == "critical"
+
+    def test_critical_when_below_critical_reverse(self) -> None:
+        from sysstable.thresholds import Severity, evaluate_thresholds
+
+        metrics = {"ram": {"available_mb": 50}}
+        thresholds = {"ram_available_mb": {"yellow": 1024, "red": 256, "critical": 128}}
+        v = evaluate_thresholds(metrics, thresholds)
+        assert v["ram_available_mb"] == Severity.CRITICAL
+
+    def test_red_not_critical_when_between_red_and_critical(self) -> None:
+        from sysstable.thresholds import Severity, evaluate_thresholds
+
+        metrics = {"ram": {"available_mb": 200}}
+        thresholds = {"ram_available_mb": {"yellow": 1024, "red": 256, "critical": 128}}
+        v = evaluate_thresholds(metrics, thresholds)
+        assert v["ram_available_mb"] == Severity.RED
+
+    def test_green_when_above_all_reverse(self) -> None:
+        from sysstable.thresholds import evaluate_thresholds
+
+        metrics = {"ram": {"available_mb": 2000}}
+        thresholds = {"ram_available_mb": {"yellow": 1024, "red": 256, "critical": 128}}
+        v = evaluate_thresholds(metrics, thresholds)
+        assert "ram_available_mb" not in v
+
+
+class TestNewConfig:
+    """Test new config blocks (Phase 2 addition)."""
+
+    def test_memory_pressure_defaults(self) -> None:
+        from sysstable.config import DEFAULT_CONFIG
+
+        mp = DEFAULT_CONFIG["memory_pressure"]
+        assert mp["confirmation_intervals"] == 5
+        assert mp["countdown_seconds"] == 90
+        assert mp["process_snapshot_interval"] == 60
+        assert mp["normal_snapshot_interval"] == 300
+        assert mp["kill_list_persistence_interval"] == 5
+        assert mp["kill_list_history_max"] == 50
+
+    def test_resolution_defaults(self) -> None:
+        from sysstable.config import DEFAULT_CONFIG
+
+        r = DEFAULT_CONFIG["resolution"]
+        assert r["auto_resolve"] is True
+        assert r["sigterm_timeout_seconds"] == 10
+        assert r["pause_count"] == 3
+        assert r["pause_duration_seconds"] == 10
+        assert r["max_resolution_cycles"] == 3
+        assert r["min_freed_memory_mb"] == 64
+        assert r["systemd_managed_services"] == []
+
+    def test_process_scoring_defaults(self) -> None:
+        from sysstable.config import DEFAULT_CONFIG
+
+        ps = DEFAULT_CONFIG["process_scoring"]
+        assert ps["memory_weight"] == 0.5
+        assert ps["cpu_weight"] == 0.25
+        assert ps["false_positive_penalty"] == 0.5
+
+    def test_never_kill_defaults(self) -> None:
+        from sysstable.config import DEFAULT_CONFIG
+
+        nk = DEFAULT_CONFIG["never_kill"]
+        assert len(nk["user_list"]) > 0
+        assert "sshd" in nk["user_list"]
+
+    def test_thresholds_has_critical(self) -> None:
+        from sysstable.config import DEFAULT_CONFIG
+
+        assert DEFAULT_CONFIG["thresholds"]["ram_available_mb"]["critical"] == 128

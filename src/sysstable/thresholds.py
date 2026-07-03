@@ -11,6 +11,7 @@ class Severity(str, Enum):
     YELLOW = "yellow"
     ORANGE = "orange"
     RED = "red"
+    CRITICAL = "critical"
 
 
 def evaluate_thresholds(
@@ -87,8 +88,11 @@ def _check(value: float | None, levels: dict[str, float], reverse: bool = False)
     red = levels.get("red")
     orange = levels.get("orange")
     yellow = levels.get("yellow")
+    critical = levels.get("critical")
 
     if reverse:
+        if critical is not None and value <= critical:
+            return Severity.CRITICAL
         if red is not None and value <= red:
             return Severity.RED
         if orange is not None and value <= orange:
