@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import sys
@@ -14,6 +15,11 @@ import click
 from .config import default_config_path, load_config
 from .daemon import run_daemon
 from .database import MetricsDB
+from .process_watch import (
+    fetch_all_processes,
+    NoKillManager,
+    HARD_CODED_NO_KILL,
+)
 from .socketd import query_daemon
 
 
@@ -64,8 +70,9 @@ def init(ctx: click.Context) -> None:
 
 @cli.command()
 @click.option("--foreground", "-f", is_flag=True, help="Run in foreground")
+@click.option("--never-kill", multiple=True, help="PID or name to protect from resolution")
 @click.pass_context
-def start(ctx: click.Context, foreground: bool) -> None:
+def start(ctx: click.Context, foreground: bool, never_kill: tuple[str, ...]) -> None:
     """Start the sysstable daemon."""
     config_path = ctx.obj.get("config_path")
 
@@ -216,6 +223,152 @@ def uninstall(ctx: click.Context) -> None:
                 click.echo(f"  ✗ removed: {p}")
 
     click.echo("\n✅ sysstable uninstalled")
+
+
+@cli.command()
+@click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table")
+@click.option("--limit", type=int, default=10, help="Max results")
+@click.pass_context
+def kill_list(ctx: click.Context, fmt: str, limit: int) -> None:
+    """Show kill list history from the database."""
+    config = load_config(ctx.obj.get("config_path"))
+    db_path = config["db_path"]
+    if not Path(db_path).exists():
+        click.echo("No metrics database found")
+        return
+
+    db = MetricsDB(db_path)
+    history = db.query_kill_list_history(limit=limit)
+    db.close()
+
+    if not history:
+        click.echo("No kill list history available")
+        return
+
+    if fmt == "json":
+        click.echo(json.dumps(history, indent=2))
+        return
+
+    click.echo(f"{'Time':<22} {'Trigger':<12} {'Entries':>8} {'RAM':>8}")
+    click.echo("─" * 52)
+    for h in history:
+        ts = h.get("timestamp_ns", 0) / 1_000_000_000
+        t = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+        trigger = h.get("trigger", "?")[:10]
+        entries = len(json.loads(h.get("entries_json", "[]"))) if h.get("entries_json") else 0
+        ram = h.get("mem_avail_mb", 0)
+        click.echo(f"{t:<22} {trigger:<12} {entries:>8} {ram:>7.0f}MB")
+    click.echo("─" * 52)
+
+
+@cli.command()
+@click.option("--sort", "sort_by", type=click.Choice(["memory", "cpu", "io"]), default="memory")
+@click.option("--limit", type=int, default=10, help="Max processes")
+@click.option("--watch", is_flag=True, help="Repeatedly refresh")
+@click.pass_context
+def processes(ctx: click.Context, sort_by: str, limit: int, watch: bool) -> None:
+    """Show running processes sorted by resource usage."""
+    import psutil
+
+    if watch:
+        click.echo("Watching processes every 3s (Ctrl+C to stop)...")
+        try:
+            while True:
+                _print_process_list(fetch_all_processes(lightweight=True)[:limit], sort_by)
+                time.sleep(3)
+        except KeyboardInterrupt:
+            return
+    else:
+        snaps = fetch_all_processes(lightweight=True)[:limit]
+        _print_process_list(snaps, sort_by)
+
+
+def _print_process_list(snaps: list, sort_by: str) -> None:
+    """Print a table of process snapshots."""
+    sort_key = {"memory": lambda s: s.memory_rss_mb,
+                 "cpu": lambda s: s.cpu_percent,
+                 "io": lambda s: s.io_read_bytes + s.io_write_bytes}
+    sorted_snaps = sorted(snaps, key=sort_key.get(sort_by, sort_key["memory"]), reverse=True)
+
+    click.echo(f"{'PID':>7} {'Name':<16} {'Memory':>8} {'CPU%':>6} {'IO R/W':>12}")
+    click.echo("─" * 52)
+    for snap in sorted_snaps[:10]:
+        io = f"{snap.io_read_bytes // 1024}k/{snap.io_write_bytes // 1024}k"
+        click.echo(f"{snap.pid:>7} {snap.name:<16} {snap.memory_rss_mb:>7.0f}MB {snap.cpu_percent:>5.1f}% {io:>12}")
+    click.echo("─" * 52)
+
+
+@cli.command()
+@click.option("--add", multiple=True, help="PID or name to add to protection")
+@click.option("--remove", multiple=True, help="Name to remove from protection")
+@click.pass_context
+def never_kill(ctx: click.Context, add: tuple[str, ...], remove: tuple[str, ...]) -> None:
+    """Show or modify the never-kill protected process list."""
+    config = load_config(ctx.obj.get("config_path"))
+    user_list = config.get("never_kill", {}).get("user_list", [])
+    mgr = NoKillManager(user_list=user_list)
+
+    if add:
+        for item in add:
+            click.echo(f"  Override at runtime: {item}")
+            # CL override will be applied at next daemon restart
+        click.echo("⚠ Use --never-kill on `start` for runtime overrides")
+        return
+
+    if remove:
+        click.echo("Runtime removal not supported via CLI — edit config.yaml")
+        return
+
+    # Display protected list
+    click.echo("Protected processes (never-kill):")
+    click.echo("─" * 40)
+    protected = mgr.get_protected_names()
+    for name in sorted(protected):
+        marker = "🔒" if name in HARD_CODED_NO_KILL else "📋"
+        click.echo(f"  {marker} {name}")
+    click.echo("─" * 40)
+    click.echo(f"  Total: {len(protected)} ({len(HARD_CODED_NO_KILL)} hard-coded)")
+    if mgr.protected_pids:
+        click.echo(f"  PID overrides: {', '.join(str(p) for p in mgr.protected_pids)}")
+    click.echo("")
+    click.echo("Edit config.yaml `never_kill.user_list` to add/remove permanently.")
+
+
+@cli.command()
+@click.option("--limit", type=int, default=10, help="Max events")
+@click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table")
+@click.pass_context
+def resolution_history(ctx: click.Context, limit: int, fmt: str) -> None:
+    """Show resolution event history."""
+    config = load_config(ctx.obj.get("config_path"))
+    db_path = config["db_path"]
+    if not Path(db_path).exists():
+        click.echo("No metrics database found")
+        return
+
+    db = MetricsDB(db_path)
+    events = db.query_resolution_history(limit=limit)
+    db.close()
+
+    if not events:
+        click.echo("No resolution events recorded")
+        return
+
+    if fmt == "json":
+        click.echo(json.dumps(events, indent=2, default=str))
+        return
+
+    click.echo(f"{'Time':<22} {'Action':<12} {'PID':>7} {'Name':<16} {'Success':>8}")
+    click.echo("─" * 68)
+    for e in events:
+        ts = e.get("timestamp_ns", 0) / 1_000_000_000
+        t = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+        action = (e.get("action") or "?")[:10]
+        pid = e.get("pid", 0)
+        name = (e.get("name") or "?")[:15]
+        success = "✅" if e.get("success") else "❌"
+        click.echo(f"{t:<22} {action:<12} {pid:>7} {name:<16} {success:>8}")
+    click.echo("─" * 68)
 
 
 def _print_metrics(metrics: dict[str, Any]) -> None:
