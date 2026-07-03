@@ -15,6 +15,43 @@ CREATE TABLE IF NOT EXISTS metrics (
     data_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics(timestamp_ns);
+
+CREATE TABLE IF NOT EXISTS kill_list_generations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp_ns INTEGER NOT NULL,
+    trigger TEXT NOT NULL,
+    entries_json TEXT NOT NULL,
+    mem_avail_mb REAL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS resolution_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp_ns INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    pid INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    signal TEXT,
+    success INTEGER DEFAULT 0,
+    details TEXT
+);
+
+CREATE TABLE IF NOT EXISTS process_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp_ns INTEGER NOT NULL,
+    pid INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    cmdline TEXT,
+    memory_rss_mb REAL,
+    memory_percent REAL,
+    cpu_percent REAL,
+    io_read_bytes INTEGER,
+    io_write_bytes INTEGER,
+    status TEXT,
+    username TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_snaps_pid_name ON process_snapshots(pid, name);
+CREATE INDEX IF NOT EXISTS idx_snaps_timestamp ON process_snapshots(timestamp_ns);
+
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 """
@@ -88,6 +125,91 @@ class MetricsDB:
     def close(self) -> None:
         self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self.conn.close()
+
+    # ── Kill List Generations ────────────────────────────────────────────
+
+    def save_kill_list_generation(self, trigger: str, entries_json: str,
+                                   mem_avail_mb: float = 0.0) -> int:
+        self.conn.execute(
+            "INSERT INTO kill_list_generations (timestamp_ns, trigger, entries_json, mem_avail_mb) "
+            "VALUES (?, ?, ?, ?)",
+            (time.time_ns(), trigger, entries_json, mem_avail_mb),
+        )
+        self.conn.commit()
+        return self.conn.lastrowid or 0
+
+    def query_kill_list_history(self, limit: int = 10) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM kill_list_generations ORDER BY timestamp_ns DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── Resolution Events ────────────────────────────────────────────────
+
+    def save_resolution_event(self, action: str, pid: int, name: str,
+                               signal: str | None = None,
+                               success: bool = False,
+                               details: str | None = None) -> int:
+        self.conn.execute(
+            "INSERT INTO resolution_events (timestamp_ns, action, pid, name, signal, success, details) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (time.time_ns(), action, pid, name, signal, int(success), details),
+        )
+        self.conn.commit()
+        return self.conn.lastrowid or 0
+
+    def query_resolution_history(self, limit: int = 10) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM resolution_events ORDER BY timestamp_ns DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── Process Snapshots ────────────────────────────────────────────────
+
+    def save_process_snapshots(self, snapshots: list[Any]) -> int:
+        count = 0
+        now = time.time_ns()
+        for snap in snapshots:
+            self.conn.execute(
+                "INSERT INTO process_snapshots "
+                "(timestamp_ns, pid, name, cmdline, memory_rss_mb, memory_percent, "
+                " cpu_percent, io_read_bytes, io_write_bytes, status, username) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (now, snap.pid, snap.name, snap.cmdline,
+                 snap.memory_rss_mb, snap.memory_percent,
+                 snap.cpu_percent, snap.io_read_bytes, snap.io_write_bytes,
+                 snap.status, snap.username),
+            )
+            count += 1
+        self.conn.commit()
+        return count
+
+    def query_process_snapshots(self, pid: int, name: str,
+                                 hours: int = 1) -> list[dict[str, Any]]:
+        cutoff_ns = time.time_ns() - (hours * 3600 * 1_000_000_000)
+        rows = self.conn.execute(
+            "SELECT * FROM process_snapshots "
+            "WHERE pid = ? AND name = ? AND timestamp_ns >= ? "
+            "ORDER BY timestamp_ns DESC",
+            (pid, name, cutoff_ns),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def prune_process_snapshots(self, retain_hours: int = 24) -> int:
+        cutoff_ns = time.time_ns() - (retain_hours * 3600 * 1_000_000_000)
+        row = self.conn.execute(
+            "SELECT COUNT(*) as c FROM process_snapshots WHERE timestamp_ns < ?",
+            (cutoff_ns,),
+        ).fetchone()
+        before = row["c"] if row else 0
+        self.conn.execute(
+            "DELETE FROM process_snapshots WHERE timestamp_ns < ?",
+            (cutoff_ns,),
+        )
+        self.conn.commit()
+        return before
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
