@@ -24,6 +24,8 @@ def test_kill_process_terminates(mock_proc_class):
     resolver = MemoryPressureResolver({}, object())
     mock_proc = MagicMock()
     mock_proc.is_running.return_value = True
+    mock_proc.name.return_value = "firefox"
+    mock_proc.cmdline.return_value = ["/usr/bin/firefox"]
     mock_proc_class.return_value = mock_proc
 
     entry = _make_entry(1001, "firefox", mem_mb=500.0)
@@ -103,6 +105,8 @@ def test_kill_permission_error(mock_proc_class):
 
     mock_proc = MagicMock()
     mock_proc.is_running.return_value = True
+    mock_proc.name.return_value = "protected"
+    mock_proc.cmdline.return_value = ["/usr/bin/protected"]
     mock_proc.send_signal.side_effect = psutil.AccessDenied()
     mock_proc_class.return_value = mock_proc
 

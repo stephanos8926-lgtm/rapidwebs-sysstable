@@ -25,6 +25,7 @@ from .process_watch import (
 )
 from .socketd import SocketServer
 from .state_machine import PressureState, PressureStateMachine
+from .systemd_notify import notify_ready, notify_stopping, notify_watchdog
 from .thresholds import Severity, evaluate_thresholds
 
 logger = logging.getLogger("sysstable.daemon")
@@ -102,7 +103,7 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
     socket_path = Path(config.get("socket_path", "")).expanduser()
 
     # Initialize memory pressure subsystems
-    no_kill_mgr = NoKillManager(user_list=config.get("never_kill", {}).get("user_list"))
+    no_kill_mgr = NoKillManager.from_config(config)
     kill_list_gen = KillListGenerator(config, no_kill_mgr, db)
     state_machine = PressureStateMachine(config)
     mem_cfg = config.get("memory_pressure", {})
@@ -117,6 +118,9 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
+
+    # Notify systemd that startup is complete
+    notify_ready()
 
     logger.info(
         "sysstabled starting — interval=%ds, retention=%dh, db=%s, socket=%s",
@@ -179,7 +183,7 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
 
                 # Snapshot collection (on timer, not every cycle)
                 if current_state != PressureState.NORMAL:
-                    elapsed = (time.time() - _last_snap_time) * 1000
+                    elapsed = time.time() - _last_snap_time
                     if elapsed >= process_snap_interval:
                         snaps = fetch_all_processes(lightweight=False)
                         count = snapshot_processes_to_db(snaps, db)
@@ -188,9 +192,8 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
                         kill_list_gen.regenerate(snaps)
                         _last_snap_time = time.time()
                 else:
-                    elapsed = (time.time() - _last_normal_snap_time) * 1000
-                    rate = normal_snap_interval * 1000  # convert seconds to ms
-                    if rate > 0 and elapsed >= rate:
+                    elapsed = time.time() - _last_normal_snap_time
+                    if normal_snap_interval > 0 and elapsed >= normal_snap_interval:
                         snaps = fetch_all_processes(lightweight=True)
                         count = snapshot_processes_to_db(snaps, db)
                         if count:
@@ -206,11 +209,15 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
                 elif _RUNNING:
                     time.sleep(interval)
 
+                # Send watchdog ping to systemd (if running under it)
+                notify_watchdog()
+
             except Exception as e:
                 logger.error("Collection cycle failed: %s", e, exc_info=True)
                 if foreground:
                     time.sleep(interval)
     finally:
+        notify_stopping()
         sock_server.stop()
         _cleanup_pid()
         db.close()

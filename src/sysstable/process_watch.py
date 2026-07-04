@@ -246,6 +246,24 @@ class NoKillManager:
                     if item:
                         self._cli_names.add(item)
 
+    @classmethod
+    def from_config(cls, config: dict) -> NoKillManager:
+        """Create NoKillManager from sysstable config dict.
+
+        Reads ``never_kill.user_list`` from config for user-configured
+        protected process names, plus ``never_kill.pids`` for PID overrides.
+        CLI overrides and env var are loaded separately from runtime state.
+
+        Args:
+            config: Full sysstable config dict (from load_config).
+
+        Returns:
+            Configured NoKillManager instance.
+        """
+        never_kill = config.get("never_kill", {})
+        user_list = never_kill.get("user_list") or never_kill.get("names") or []
+        return cls(user_list=list(user_list))
+
     @staticmethod
     def validate_env_var(val: str) -> list[str]:
         """Validate SYSTABLE_NEVER_KILL entries.

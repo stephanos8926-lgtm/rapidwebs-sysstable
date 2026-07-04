@@ -1,0 +1,61 @@
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Project docs (not needed at runtime)
+docs/
+*.md
+CHANGELOG.md
+LICENSE
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+SECURITY.md
+
+# Tests (not needed at runtime)
+tests/
+*.test.py
+
+# Hermes plugin (installed separately)
+hermes-plugin/
+
+# CI/CD
+.github/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+htmlcov/
+.coverage
+.coverage.*
+
+# Environment
+.env
+.env.*
+
+# Pre-commit
+.pre-commit-config.yaml
+
+# Config
+Makefile
+MANIFEST.in
+pyproject.toml
+docker-compose.yml

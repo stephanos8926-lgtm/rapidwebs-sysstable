@@ -166,9 +166,7 @@ process_scoring:
 
 never_kill:
   # List of processes (by pid, name, or cmdline) to never kill
-  pids: []
-  names: ["hermes-agent", "sysstabled"] # Example: exclude the agent itself and the daemon
-  cmdlines: []
+  user_list: ["hermes-agent", "sysstabled"] # Process names to protect (from config file)
 
 events:
   shell_hooks_dir: ~/.config/sysstable/hooks.d

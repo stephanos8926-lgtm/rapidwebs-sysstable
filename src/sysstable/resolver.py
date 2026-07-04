@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import signal
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -130,10 +131,13 @@ class MemoryPressureResolver:
         if not entries:
             return result
 
+        kill_succeeded = False
+
         # 1. Kill #1
         target = entries[0]
         sig = self._get_signal_for_process(target)
         if self._kill_process(target, sig, details):
+            kill_succeeded = True
             result.kill_count = 1
         else:
             logger.warning("Failed to kill #1 (%s), trying next", target.name)
@@ -141,6 +145,7 @@ class MemoryPressureResolver:
             if len(entries) > 1:
                 target = entries[1]
                 if self._kill_process(target, self._get_signal_for_process(target), details):
+                    kill_succeeded = True
                     result.kill_count = 1
 
         # 2. Pause next U
@@ -155,17 +160,16 @@ class MemoryPressureResolver:
         #    Reverse linear: position i waits L * (U - i + 1)
         unpause_delays = []
         for i, entry in enumerate(paused):
-            i + 2  # position in kill list (1-indexed)
             delay = self.pause_duration * (self.pause_count - i)
             unpause_delays.append((entry, delay))
 
         # Fire-and-forget unpause threads
-        import threading
-
         for entry, delay in unpause_delays:
             t = threading.Timer(delay, self._unpause_process, args=[entry, details])
             t.daemon = True
             t.start()
+
+        result.success = kill_succeeded
 
         # Log all actions
         for d in details:
@@ -195,6 +199,31 @@ class MemoryPressureResolver:
             proc = psutil.Process(entry.pid)
             if not proc.is_running():
                 logger.info("Process %d (%s) already dead", entry.pid, entry.name)
+                return True
+
+            # Triple-verify (pid, name, cmdline) to prevent PID-recycling attacks
+            try:
+                actual_name = proc.name()
+                actual_cmdline = " ".join(proc.cmdline()) if proc.cmdline() else ""
+                if actual_name != entry.name or actual_cmdline != entry.cmdline:
+                    logger.warning(
+                        "PID %d recycled! Expected %s (%s), got %s (%s). Skipping.",
+                        entry.pid,
+                        entry.name,
+                        entry.cmdline,
+                        actual_name,
+                        actual_cmdline,
+                    )
+                    details.append(
+                        {
+                            "action": "skipped",
+                            "pid": entry.pid,
+                            "reason": f"PID recycled: expected {entry.name}, got {actual_name}",
+                        }
+                    )
+                    return True  # skip — not the same process anymore
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                logger.info("Process %d vanished during triple-verify", entry.pid)
                 return True
 
             kill_tried = signal.Signals(sig).name if hasattr(signal, "Signals") else str(sig)

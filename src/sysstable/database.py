@@ -109,6 +109,7 @@ class MetricsDB:
         return _row_to_dict(rows[0]) if rows else None
 
     def count(self) -> int:
+        """Return the total number of metric records."""
         row = self.conn.execute("SELECT COUNT(*) as c FROM metrics").fetchone()
         return row["c"] if row else 0
 
@@ -123,12 +124,14 @@ class MetricsDB:
         return before
 
     def close(self) -> None:
+        """Close the database connection after checkpointing WAL."""
         self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self.conn.close()
 
     # ── Kill List Generations ────────────────────────────────────────────
 
     def save_kill_list_generation(self, trigger: str, entries_json: str, mem_avail_mb: float = 0.0) -> int:
+        """Persist a kill list generation event. Returns row ID."""
         self.conn.execute(
             "INSERT INTO kill_list_generations (timestamp_ns, trigger, entries_json, mem_avail_mb) VALUES (?, ?, ?, ?)",
             (time.time_ns(), trigger, entries_json, mem_avail_mb),
@@ -137,6 +140,7 @@ class MetricsDB:
         return self.conn.lastrowid or 0
 
     def query_kill_list_history(self, limit: int = 10) -> list[dict[str, Any]]:
+        """Return the most recent kill list generations."""
         rows = self.conn.execute(
             "SELECT * FROM kill_list_generations ORDER BY timestamp_ns DESC LIMIT ?",
             (limit,),
@@ -154,6 +158,7 @@ class MetricsDB:
         success: bool = False,
         details: str | None = None,
     ) -> int:
+        """Record a resolution event (kill/pause/unpause). Returns row ID."""
         self.conn.execute(
             "INSERT INTO resolution_events (timestamp_ns, action, pid, name, signal, success, details) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -163,6 +168,7 @@ class MetricsDB:
         return self.conn.lastrowid or 0
 
     def query_resolution_history(self, limit: int = 10) -> list[dict[str, Any]]:
+        """Return the most recent resolution events."""
         rows = self.conn.execute(
             "SELECT * FROM resolution_events ORDER BY timestamp_ns DESC LIMIT ?",
             (limit,),
@@ -172,6 +178,7 @@ class MetricsDB:
     # ── Process Snapshots ────────────────────────────────────────────────
 
     def save_process_snapshots(self, snapshots: list[Any]) -> int:
+        """Batch-insert process snapshots. Returns number of rows inserted."""
         count = 0
         now = time.time_ns()
         for snap in snapshots:
@@ -199,6 +206,7 @@ class MetricsDB:
         return count
 
     def query_process_snapshots(self, pid: int, name: str, hours: int = 1) -> list[dict[str, Any]]:
+        """Return process snapshots for a given pid+name within the last N hours."""
         cutoff_ns = time.time_ns() - (hours * 3600 * 1_000_000_000)
         rows = self.conn.execute(
             "SELECT * FROM process_snapshots "
@@ -209,6 +217,7 @@ class MetricsDB:
         return [dict(r) for r in rows]
 
     def prune_process_snapshots(self, retain_hours: int = 24) -> int:
+        """Delete process snapshots older than retain_hours. Returns count deleted."""
         cutoff_ns = time.time_ns() - (retain_hours * 3600 * 1_000_000_000)
         row = self.conn.execute(
             "SELECT COUNT(*) as c FROM process_snapshots WHERE timestamp_ns < ?",

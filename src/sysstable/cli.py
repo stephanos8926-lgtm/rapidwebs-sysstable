@@ -205,17 +205,30 @@ def uninstall(ctx: click.Context) -> None:
     # Stop daemon
     query_daemon(config["socket_path"], "stop")
 
-    # Clean up files
-    paths_to_remove = [
-        Path(config["db_path"]).parent,
-        Path(config["socket_path"]),
-        Path(config["socket_path"]).parent,
-    ]
-    for p in paths_to_remove:
+    # Clean up files — validate paths are within expected namespaces
+    import shutil
+
+    cache_root = Path.home() / ".cache" / "sysstable"
+    config_root = Path.home() / ".config" / "sysstable"
+    plugin_dir = Path.home() / ".hermes" / "plugins" / "rapidwebs-sysstable"
+
+    paths_to_remove = []
+    for path_key in ["db_path", "socket_path", "state_path"]:
+        raw = config.get(path_key, "")
+        p = Path(raw).expanduser() if raw else None
+        if p and (
+            str(p).startswith(str(cache_root))
+            or str(p).startswith(str(config_root))
+            or str(p).startswith(str(plugin_dir))
+        ):
+            paths_to_remove.append(p)
+            # Also remove parent for db_path (the cache dir itself)
+            if path_key == "db_path":
+                paths_to_remove.append(p.parent)
+
+    for p in set(paths_to_remove):
         if p.exists():
             if p.is_dir():
-                import shutil
-
                 shutil.rmtree(p, ignore_errors=True)
                 click.echo(f"  ✗ removed: {p}")
             else:
