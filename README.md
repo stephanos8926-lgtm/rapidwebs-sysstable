@@ -64,7 +64,7 @@ critical states, injecting context warnings on pressure.
 ### From PyPI
 
 ```bash
-pip install rapidwebs-sysstable
+pip install rw-sysstable
 ```
 
 ### From Source

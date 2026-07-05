@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "rapidwebs-sysstable"
+name = "rw-sysstable"
 version = "0.2.0"
 description = "System stability monitor with Hermes integration — daemon, CLI, plugin, and critical memory pressure resolution"
 readme = "README.md"

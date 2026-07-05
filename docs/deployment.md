@@ -21,7 +21,7 @@ The fastest way to get running:
 
 ```bash
 # Install the package
-pip install rapidwebs-sysstable
+pip install rw-sysstable
 
 # Initialize directories + default config
 sysstable init
@@ -51,7 +51,7 @@ sysstable status
 
 ```bash
 # From PyPI
-pip install rapidwebs-sysstable
+pip install rw-sysstable
 
 # Or from source for the latest
 git clone https://github.com/stephanos8926-lgtm/rapidwebs-sysstable.git
@@ -208,7 +208,7 @@ docker compose logs -f
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
 | `sysstable status` fails | Daemon not running | `sysstable start` |
-| `sysstable: command not found` | Package not installed | `pip install rapidwebs-sysstable` |
+| `sysstable: command not found` | Package not installed | `pip install rw-sysstable` |
 | "Permission denied" on socket | Socket path permissions | Check `socket_path` in config.yaml |
 | "No metrics collected yet" | Daemon just started | Wait 15s for first collection |
 | Hermes plugin not blocking | Plugin not enabled | `hermes config set plugins.rapidwebs-sysstable.enabled true` |
@@ -219,7 +219,7 @@ docker compose logs -f
 
 ```bash
 # Via PyPI
-pip install --upgrade rapidwebs-sysstable
+pip install --upgrade rw-sysstable
 
 # Via source
 cd ~/Workspaces/rapidwebs-sysstable

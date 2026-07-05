@@ -16,7 +16,7 @@ set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-PACKAGE_NAME="rapidwebs-sysstable"
+PACKAGE_NAME="rw-sysstable"
 PLUGIN_NAME="rapidwebs-sysstable"
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_SRC="$PROJECT_ROOT/hermes-plugin/$PLUGIN_NAME"

@@ -16,7 +16,7 @@ install: ## Install package in editable mode with dev deps
 	uv venv && source .venv/bin/activate && uv pip install -e ".[dev]"
 
 install-package: ## Install the released package from PyPI
-	pip install rapidwebs-sysstable
+	pip install rw-sysstable
 
 test: ## Run tests (short output)
 	.venv/bin/pytest tests/ -v --tb=short
