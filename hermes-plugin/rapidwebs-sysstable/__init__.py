@@ -18,7 +18,7 @@ from typing import Any
 
 logger = logging.getLogger("rapidwebs-sysstable")
 
-version = "0.2.0"
+version = "0.2.1"
 description = "System stability awareness + critical memory pressure resolution hooks"
 author = "RapidWebs (Lucien)"
 license = "MIT"

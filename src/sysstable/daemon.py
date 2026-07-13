@@ -23,6 +23,7 @@ from .process_watch import (
     fetch_all_processes,
     snapshot_processes_to_db,
 )
+from .resolver import MemoryPressureResolver
 from .socketd import SocketServer
 from .state_machine import PressureState, PressureStateMachine
 from .systemd_notify import notify_ready, notify_stopping, notify_watchdog
@@ -106,6 +107,7 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
     no_kill_mgr = NoKillManager.from_config(config)
     kill_list_gen = KillListGenerator(config, no_kill_mgr, db)
     state_machine = PressureStateMachine(config)
+    resolver = MemoryPressureResolver(config, db)
     mem_cfg = config.get("memory_pressure", {})
     process_snap_interval = int(mem_cfg.get("process_snapshot_interval", 60))
     normal_snap_interval = int(mem_cfg.get("normal_snapshot_interval", 300))
@@ -201,8 +203,19 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
                         _last_normal_snap_time = time.time()
 
                 if state_machine.should_fire_resolution():
-                    logger.warning("Memory pressure countdown expired — ready for resolution")
-                    # P8 resolver will be wired here when built
+                    logger.warning("Memory pressure countdown expired — executing resolution")
+                    kill_list = kill_list_gen.get_kill_list()
+                    result = resolver.resolve(kill_list, ram_avail)
+                    logger.info("Resolution result: %s", result.action_summary)
+                    state_machine.on_resolution_complete(result.success)
+                    # Update state with resolution info
+                    state["resolution_active"] = True
+                    state["resolution_info"] = {
+                        "result": result.action_summary,
+                        "kill_count": result.kill_count,
+                        "pause_count": result.pause_count,
+                        "freed_mb": None,
+                    }
 
                 if not foreground:
                     time.sleep(interval)

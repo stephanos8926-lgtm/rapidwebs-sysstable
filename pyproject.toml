@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rw-sysstable"
-version = "0.2.0"
+version = "0.2.1"
 description = "System stability monitor with Hermes integration — daemon, CLI, plugin, and critical memory pressure resolution"
 readme = "README.md"
 license = {text = "MIT"}

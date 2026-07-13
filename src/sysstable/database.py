@@ -132,12 +132,12 @@ class MetricsDB:
 
     def save_kill_list_generation(self, trigger: str, entries_json: str, mem_avail_mb: float = 0.0) -> int:
         """Persist a kill list generation event. Returns row ID."""
-        self.conn.execute(
+        cursor = self.conn.execute(
             "INSERT INTO kill_list_generations (timestamp_ns, trigger, entries_json, mem_avail_mb) VALUES (?, ?, ?, ?)",
             (time.time_ns(), trigger, entries_json, mem_avail_mb),
         )
         self.conn.commit()
-        return self.conn.lastrowid or 0
+        return cursor.lastrowid or 0
 
     def query_kill_list_history(self, limit: int = 10) -> list[dict[str, Any]]:
         """Return the most recent kill list generations."""
@@ -159,13 +159,13 @@ class MetricsDB:
         details: str | None = None,
     ) -> int:
         """Record a resolution event (kill/pause/unpause). Returns row ID."""
-        self.conn.execute(
+        cursor = self.conn.execute(
             "INSERT INTO resolution_events (timestamp_ns, action, pid, name, signal, success, details) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (time.time_ns(), action, pid, name, signal, int(success), details),
         )
         self.conn.commit()
-        return self.conn.lastrowid or 0
+        return cursor.lastrowid or 0
 
     def query_resolution_history(self, limit: int = 10) -> list[dict[str, Any]]:
         """Return the most recent resolution events."""
