@@ -14,36 +14,36 @@ TOKENS_SCHEMA = {
             "type": "object",
             "properties": {
                 "max_input_tokens": {"type": "integer", "minimum": 1},
-                "max_output_tokens": {"type": "integer", "minimum": 1}
+                "max_output_tokens": {"type": "integer", "minimum": 1},
             },
-            "required": ["max_input_tokens", "max_output_tokens"]
+            "required": ["max_input_tokens", "max_output_tokens"],
         },
         "ast_edit": {
             "type": "object",
             "properties": {
                 "max_input_tokens": {"type": "integer", "minimum": 1},
-                "max_output_tokens": {"type": "integer", "minimum": 1}
+                "max_output_tokens": {"type": "integer", "minimum": 1},
             },
-            "required": ["max_input_tokens", "max_output_tokens"]
+            "required": ["max_input_tokens", "max_output_tokens"],
         },
         "ast_read": {
             "type": "object",
             "properties": {
                 "max_input_tokens": {"type": "integer", "minimum": 1},
-                "max_output_tokens": {"type": "integer", "minimum": 1}
+                "max_output_tokens": {"type": "integer", "minimum": 1},
             },
-            "required": ["max_input_tokens", "max_output_tokens"]
+            "required": ["max_input_tokens", "max_output_tokens"],
         },
         "semantic_search": {
             "type": "object",
             "properties": {
                 "max_input_tokens": {"type": "integer", "minimum": 1},
-                "max_output_tokens": {"type": "integer", "minimum": 1}
+                "max_output_tokens": {"type": "integer", "minimum": 1},
             },
-            "required": ["max_input_tokens", "max_output_tokens"]
-        }
+            "required": ["max_input_tokens", "max_output_tokens"],
+        },
     },
-    "additionalProperties": False
+    "additionalProperties": False,
 }
 
-DEFAULT_TOKENS_PATH = "src/ast_tools/config/tokens.yaml" # relative
+DEFAULT_TOKENS_PATH = "src/ast_tools/config/tokens.yaml"  # relative

@@ -1,8 +1,13 @@
-
-import os, shutil, yaml
+import os
+import shutil
 from pathlib import Path
 
-class ConfigError(Exception): pass
+import yaml
+
+
+class ConfigError(Exception):
+    pass
+
 
 def get_config_dir() -> Path:
     if env_home := os.environ.get("AST_TOOLS_HOME"):
@@ -15,12 +20,14 @@ def get_config_dir() -> Path:
     # Use Path.home() only if AST_TOOLS_HOME and XDG_CONFIG_HOME are not set
     return Path.home() / ".ast-tools"
 
+
 def _validate_safe_path(path: Path) -> None:
-    resolved = path.resolve()
+    path.resolve()
     if ".." in str(path):
         raise ConfigError(f"Path contains '..' : {path}")
     if not path.is_absolute():
         raise ConfigError(f"Path must be absolute: {path}")
+
 
 def get_cache_dir() -> Path:
     if env_home := os.environ.get("AST_TOOLS_HOME"):
@@ -31,6 +38,7 @@ def get_cache_dir() -> Path:
     # Use config_dir as fallback if XDG_CACHE_HOME is not set
     return get_config_dir() / "cache"
 
+
 def get_data_dir() -> Path:
     if env_home := os.environ.get("AST_TOOLS_HOME"):
         return Path(env_home) / "data"
@@ -40,6 +48,7 @@ def get_data_dir() -> Path:
     # Use config_dir as fallback if XDG_DATA_HOME is not set
     return get_config_dir() / "data"
 
+
 def ensure_config_dir(config_dir: Path | None = None) -> Path:
     cfg = config_dir or get_config_dir()
     cfg = cfg.resolve()
@@ -48,6 +57,7 @@ def ensure_config_dir(config_dir: Path | None = None) -> Path:
         (cfg / subdir).mkdir(parents=True, exist_ok=True)
     return cfg
 
+
 def _deep_merge(base: dict, override: dict) -> dict:
     result = base.copy()
     for key, val in override.items():
@@ -55,12 +65,15 @@ def _deep_merge(base: dict, override: dict) -> dict:
             if isinstance(result[key], dict) and isinstance(val, dict):
                 result[key] = _deep_merge(result[key], val)
             elif type(result[key]) != type(val):
-                raise ConfigError(f"Type mismatch for '{key}': expected {type(result[key]).__name__}, got {type(val).__name__}")
+                raise ConfigError(
+                    f"Type mismatch for '{key}': expected {type(result[key]).__name__}, got {type(val).__name__}"
+                )
             else:
                 result[key] = val
         else:
             result[key] = val
     return result
+
 
 def migrate_legacy() -> bool:
     legacy = Path.home() / ".cache" / "ast-tools"
@@ -80,13 +93,15 @@ def migrate_legacy() -> bool:
             shutil.copytree(legacy_models, target_models)
     return True
 
+
 def load_config(name: str = "tokens") -> dict:
     config_dir = get_config_dir()
     config_path = config_dir / "config" / f"{name}.yaml"
     if not config_path.exists():
         return {{}}
-    with open(config_path, 'r') as f:
+    with open(config_path) as f:
         return yaml.safe_load(f) or {{}}
+
 
 def write_config(path: Path, data: dict) -> None:
     path = path.resolve()

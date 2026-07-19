@@ -275,7 +275,7 @@ def kill_list(ctx: click.Context, fmt: str, limit: int) -> None:
 
 
 @cli.command()
-@click.option("--sort", "sort_by", type=click.Choice(["memory", "cpu", "io"]), default="memory")
+@click.option("--sort", "sort_by", type=click.Choice(["memory", "cpu", "io", "fds", "nice"]), default="memory")
 @click.option("--limit", type=int, default=10, help="Max processes")
 @click.option("--watch", is_flag=True, help="Repeatedly refresh")
 @click.pass_context
@@ -301,15 +301,21 @@ def _print_process_list(snaps: list, sort_by: str) -> None:
         "memory": lambda s: s.memory_rss_mb,
         "cpu": lambda s: s.cpu_percent,
         "io": lambda s: s.io_read_bytes + s.io_write_bytes,
+        "fds": lambda s: getattr(s, "num_fds", 0),
+        "nice": lambda s: getattr(s, "nice", 0),
     }
     sorted_snaps = sorted(snaps, key=sort_key.get(sort_by, sort_key["memory"]), reverse=True)
 
-    click.echo(f"{'PID':>7} {'Name':<16} {'Memory':>8} {'CPU%':>6} {'IO R/W':>12}")
-    click.echo("─" * 52)
+    click.echo(f"{'PID':>7} {'Name':<16} {'Memory':>8} {'CPU%':>6} {'Nice':>5} {'FDs':>5} {'IO R/W':>12}")
+    click.echo("─" * 65)
     for snap in sorted_snaps[:10]:
         io = f"{snap.io_read_bytes // 1024}k/{snap.io_write_bytes // 1024}k"
-        click.echo(f"{snap.pid:>7} {snap.name:<16} {snap.memory_rss_mb:>7.0f}MB {snap.cpu_percent:>5.1f}% {io:>12}")
-    click.echo("─" * 52)
+        nice = getattr(snap, "nice", 0)
+        fds = getattr(snap, "num_fds", 0)
+        click.echo(
+            f"{snap.pid:>7} {snap.name:<16} {snap.memory_rss_mb:>7.0f}MB {snap.cpu_percent:>5.1f}% {nice:>5} {fds:>5} {io:>12}"  # noqa: E501
+        )
+    click.echo("─" * 65)
 
 
 @cli.command()
@@ -354,7 +360,7 @@ def never_kill(ctx: click.Context, add: tuple[str, ...], remove: tuple[str, ...]
 @click.pass_context
 def resolution_history(ctx: click.Context, limit: int, fmt: str) -> None:
     """Show resolution event history."""
-    config = load_config(ctx.obj.get("config_path"))
+    config = load_config(config_path=ctx.obj.get("config_path"))
     db_path = config["db_path"]
     if not Path(db_path).exists():
         click.echo("No metrics database found")
@@ -432,6 +438,19 @@ def _print_metrics(metrics: dict[str, Any]) -> None:
             for entry in entries:
                 if entry.get("current", 0) > 0:
                     click.echo(f"TEMP:    {sensor}: {entry['current']}°C")
+
+    # PSI (Pressure Stall Information)
+    psi = metrics.get("psi", {})
+    if psi:
+        click.echo("PSI (Pressure Stall Information):")
+        for resource, data in psi.items():
+            some = data.get("some", {})
+            full = data.get("full", {})
+            click.echo(
+                f"  {resource.upper():<6} "
+                f"some: avg10={some.get('avg10', 0.0):.2f}, avg60={some.get('avg60', 0.0):.2f}, avg300={some.get('avg300', 0.0):.2f} | "  # noqa: E501
+                f"full: avg10={full.get('avg10', 0.0):.2f}, avg60={full.get('avg60', 0.0):.2f}, avg300={full.get('avg300', 0.0):.2f}"  # noqa: E501
+            )
 
     uptime = metrics.get("uptime_seconds", 0)
     days, rem = divmod(uptime, 86400)
