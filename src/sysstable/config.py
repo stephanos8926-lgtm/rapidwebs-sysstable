@@ -80,6 +80,54 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "systemd-udevd",
         ],
     },
+    "nice_renice": {
+        "enabled": True,
+        "check_interval_seconds": 15,
+        "interactive_weight_terminal": 0.4,
+        "interactive_weight_username": 0.3,
+        "interactive_weight_parent": 0.3,
+        "score_weight": 0.5,
+        "history_weight": 0.5,
+    },
+    "pro_balance": {
+        "enabled": True,
+        "system_cpu_threshold_percent": 85.0,
+        "process_cpu_threshold_percent": 20.0,
+        "renice_value": 10,
+        "restore_delay_seconds": 15,
+    },
+    "fd_monitoring": {
+        "enabled": True,
+        "warning_threshold_percent": 80.0,
+        "critical_threshold_percent": 95.0,
+        "default_max_fds_per_process": 1024,
+        "action_on_critical": "kill",  # "log", "warn", "kill"
+    },
+    "io_monitoring": {
+        "enabled": True,
+        "default_max_read_mbps": 50.0,
+        "default_max_write_mbps": 50.0,
+        "action_on_critical": "ionice",  # "log", "warn", "ionice", "kill"
+    },
+    "psi_monitoring": {
+        "enabled": True,
+        "cpu_some_10s_threshold": 40.0,
+        "memory_some_10s_threshold": 30.0,
+        "memory_full_10s_threshold": 15.0,
+        "io_some_10s_threshold": 40.0,
+    },
+    "rules": [
+        {
+            "pattern": "firefox*",
+            "nice": 4,
+            "ionice_class": 2,
+            "ionice_value": 4,
+        },
+        {
+            "pattern": "r\"^python(3)?$\"",
+            "nice": 0,
+        },
+    ],
 }
 
 

@@ -12,6 +12,33 @@ import psutil
 logger = logging.getLogger(__name__)
 
 
+def parse_psi_file(filepath: str) -> dict[str, Any]:
+    """Parse a single PSI pressure file (e.g. /proc/pressure/memory)."""
+    res = {
+        "some": {"avg10": 0.0, "avg60": 0.0, "avg300": 0.0, "total": 0},
+        "full": {"avg10": 0.0, "avg60": 0.0, "avg300": 0.0, "total": 0}
+    }
+    try:
+        with open(filepath) as f:
+            for line in f:
+                parts = line.strip().split()
+                if not parts:
+                    continue
+                kind = parts[0]  # "some" or "full"
+                if kind not in ("some", "full"):
+                    continue
+                for item in parts[1:]:
+                    if "=" in item:
+                        k, v = item.split("=", 1)
+                        if k in ("avg10", "avg60", "avg300"):
+                            res[kind][k] = float(v)
+                        elif k == "total":
+                            res[kind][k] = int(v)
+    except Exception:  # noqa: S110
+        pass
+    return res
+
+
 @dataclass
 class SystemMetrics:
     """Snapshot of all system metrics at a point in time."""
@@ -60,6 +87,9 @@ class SystemMetrics:
     # UPTIME
     uptime_seconds: float = 0.0
 
+    # PSI
+    psi: dict[str, Any] = field(default_factory=dict)
+
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
             "timestamp": self.timestamp,
@@ -103,6 +133,7 @@ class SystemMetrics:
             else None,
             "temperatures": self.temperatures,
             "uptime_seconds": round(self.uptime_seconds, 0),
+            "psi": self.psi,
         }
         return result
 
@@ -254,5 +285,12 @@ def collect() -> SystemMetrics:
 
     # ── UPTIME ──
     metrics.uptime_seconds = time.time() - psutil.boot_time()
+
+    # ── PSI ──
+    metrics.psi = {
+        "cpu": parse_psi_file("/proc/pressure/cpu"),
+        "memory": parse_psi_file("/proc/pressure/memory"),
+        "io": parse_psi_file("/proc/pressure/io"),
+    }
 
     return metrics

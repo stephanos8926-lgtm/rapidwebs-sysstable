@@ -12,11 +12,14 @@ import time
 from pathlib import Path
 from typing import Any
 
+import psutil
+
 from . import utils
 from .collector import collect
 from .config import load_config
 from .database import MetricsDB
 from .events import dispatch_events
+from .pro_balance import ProBalanceScheduler, safe_set_ionice
 from .process_watch import (
     KillListGenerator,
     NoKillManager,
@@ -24,6 +27,7 @@ from .process_watch import (
     snapshot_processes_to_db,
 )
 from .resolver import MemoryPressureResolver
+from .rules_engine import RulesEngine
 from .socketd import SocketServer
 from .state_machine import PressureState, PressureStateMachine
 from .systemd_notify import notify_ready, notify_stopping, notify_watchdog
@@ -115,6 +119,10 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
     _last_snap_time = 0  # track snapshot timing by cycle count
     _last_normal_snap_time = 0
 
+    # Initialize new stability/fairness components
+    rules_engine = RulesEngine(config)
+    pro_balance = ProBalanceScheduler(config, db, no_kill_mgr)
+
     sock_server = SocketServer(str(socket_path))
     sock_server.start(str(db_path))
 
@@ -147,9 +155,153 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
                     if pruned:
                         logger.info("Pruned %d old metric records", pruned)
 
+                # ── Evaluate Standard Thresholds ────────────────────────────
                 threshold_configs = config.get("thresholds", {})
                 violations = evaluate_thresholds(metrics_dict, threshold_configs)
 
+                # ── PSI Monitoring (Pressure Stall Information) ─────────────
+                psi_cfg = config.get("psi_monitoring", {})
+                if psi_cfg.get("enabled", True):
+                    psi_cpu_some = metrics_dict.get("psi", {}).get("cpu", {}).get("some", {}).get("avg10", 0.0)
+                    psi_mem_some = metrics_dict.get("psi", {}).get("memory", {}).get("some", {}).get("avg10", 0.0)
+                    psi_mem_full = metrics_dict.get("psi", {}).get("memory", {}).get("full", {}).get("avg10", 0.0)
+                    psi_io_some = metrics_dict.get("psi", {}).get("io", {}).get("some", {}).get("avg10", 0.0)
+
+                    if psi_cpu_some > float(psi_cfg.get("cpu_some_10s_threshold", 40.0)):
+                        violations["psi_cpu_stall"] = Severity.ORANGE
+                    if psi_mem_full > float(psi_cfg.get("memory_full_10s_threshold", 15.0)):
+                        violations["psi_mem_stall"] = Severity.CRITICAL
+                    elif psi_mem_some > float(psi_cfg.get("memory_some_10s_threshold", 30.0)):
+                        violations["psi_mem_stall"] = Severity.RED
+                    if psi_io_some > float(psi_cfg.get("io_some_10s_threshold", 40.0)):
+                        violations["psi_io_stall"] = Severity.ORANGE
+
+                # ── Process level monitoring, rules matching, ProBalance, FDs, I/O ──
+                # Fetch snapshots (needed for active monitoring)
+                snaps = fetch_all_processes(lightweight=False)
+
+                # 1. Rules-Based nice/ionice adjustments
+                nice_renice_cfg = config.get("nice_renice", {})
+                if nice_renice_cfg.get("enabled", True):
+                    for snap in snaps:
+                        matched_rule = rules_engine.match_process(snap.pid, snap.name, snap.cmdline)
+                        if matched_rule:
+                            try:
+                                proc = psutil.Process(snap.pid)
+                                target_nice = matched_rule.get("nice")
+                                if target_nice is not None:
+                                    proc.nice(int(target_nice))
+                                    snap.nice = int(target_nice)
+
+                                target_ioclass = matched_rule.get("ionice_class")
+                                target_ioval = matched_rule.get("ionice_value", 4)
+                                if target_ioclass is not None:
+                                    safe_set_ionice(proc, int(target_ioclass), int(target_ioval))
+                            except Exception:  # noqa: S110
+                                pass
+
+                # 2. ProBalance Execution
+                if pro_balance.enabled:
+                    pb_actions = pro_balance.run_cycle(metrics_dict["cpu"]["percent"], snaps)
+                    for act in pb_actions:
+                        db.save_resolution_event(
+                            action=act["action"],
+                            pid=act["pid"],
+                            name=act["name"],
+                            success=True,
+                            details=act["details"]
+                        )
+
+                # 3. FD Limit Monitoring
+                fd_cfg = config.get("fd_monitoring", {})
+                if fd_cfg.get("enabled", True):
+                    warning_pct = float(fd_cfg.get("warning_threshold_percent", 80.0))
+                    crit_pct = float(fd_cfg.get("critical_threshold_percent", 95.0))
+                    default_max_fds = int(fd_cfg.get("default_max_fds_per_process", 1024))
+                    action_on_crit = fd_cfg.get("action_on_critical", "kill")
+
+                    for snap in snaps:
+                        # Find any process-specific rule overrides for FDs
+                        matched_rule = rules_engine.match_process(snap.pid, snap.name, snap.cmdline)
+                        max_fds = matched_rule.get("fd_limit", default_max_fds) if matched_rule else default_max_fds
+
+                        pct_used = (snap.num_fds / max_fds * 100.0) if max_fds > 0 else 0.0
+                        if pct_used >= crit_pct:
+                            violations[f"fd_exhaustion_{snap.name}"] = Severity.CRITICAL
+                            logger.critical(
+                                "Process %s (PID %d) approaching FD exhaustion: %d/%d open FDs",
+                                snap.name, snap.pid, snap.num_fds, max_fds
+                            )
+                            if action_on_crit == "kill" and not no_kill_mgr.is_protected(snap.pid, snap.name, snap.cmdline):  # noqa: E501
+                                try:
+                                    p = psutil.Process(snap.pid)
+                                    p.terminate()
+                                    msg = (
+                                        f"FD limits: terminated process {snap.name} (PID {snap.pid}) due to "
+                                        f"critical FD usage ({snap.num_fds}/{max_fds})"
+                                    )
+                                    logger.warning(msg)
+                                    db.save_resolution_event(
+                                        action="kill_fd_limit",
+                                        pid=snap.pid,
+                                        name=snap.name,
+                                        success=True,
+                                        details=msg
+                                    )
+                                except Exception as err:
+                                    logger.error("Failed to terminate process %d on FD limits: %s", snap.pid, err)
+                        elif pct_used >= warning_pct:
+                            violations[f"fd_leak_warning_{snap.name}"] = Severity.YELLOW
+                            logger.warning(
+                                "Process %s (PID %d) high FD usage warning: %d/%d open FDs",
+                                snap.name, snap.pid, snap.num_fds, max_fds
+                            )
+
+                # 4. I/O Allocation Fairness & Starvation Prevention
+                io_cfg = config.get("io_monitoring", {})
+                if io_cfg.get("enabled", True):
+                    default_max_read = float(io_cfg.get("default_max_read_mbps", 50.0))
+                    default_max_write = float(io_cfg.get("default_max_write_mbps", 50.0))
+                    action_on_crit_io = io_cfg.get("action_on_critical", "ionice")
+
+                    # We assume 1s interval for rates in lightweight loops
+                    for snap in snaps:
+                        matched_rule = rules_engine.match_process(snap.pid, snap.name, snap.cmdline)
+                        max_read = matched_rule.get("io_read_limit_mbps", default_max_read) if matched_rule else default_max_read  # noqa: E501
+                        max_write = matched_rule.get("io_write_limit_mbps", default_max_write) if matched_rule else default_max_write  # noqa: E501
+
+                        # Rough rate calculation (since snaps are lightweight or full, we look at bytes)
+                        read_mb = snap.io_read_bytes / (1024 * 1024)
+                        write_mb = snap.io_write_bytes / (1024 * 1024)
+
+                        if read_mb > max_read or write_mb > max_write:
+                            violations[f"io_saturation_{snap.name}"] = Severity.ORANGE
+                            logger.warning(
+                                "Process %s (PID %d) exceeded I/O limits — read: %.1f/%.1f MB/s, write: %.1f/%.1f MB/s",  # noqa: E501
+                                snap.name, snap.pid, read_mb, max_read, write_mb, max_write
+                            )
+                            if action_on_crit_io == "ionice":
+                                try:
+                                    proc = psutil.Process(snap.pid)
+                                    safe_set_ionice(proc, 3) # Set to IDLE
+                                    logger.info("I/O fairness: throttled I/O priority to IDLE for process %s", snap.name)  # noqa: E501
+                                except Exception:  # noqa: S110
+                                    pass
+                            elif action_on_crit_io == "kill" and not no_kill_mgr.is_protected(snap.pid, snap.name, snap.cmdline):  # noqa: E501
+                                try:
+                                    p = psutil.Process(snap.pid)
+                                    p.terminate()
+                                    db.save_resolution_event(
+                                        action="kill_io_limit",
+                                        pid=snap.pid,
+                                        name=snap.name,
+                                        success=True,
+                                        details=f"I/O limit: killed process {snap.name} exceeding limits"
+                                    )
+                                except Exception:  # noqa: S110
+                                    pass
+
+                # Write State JSON (alerts Hermes plugin)
                 state = {
                     "timestamp": metrics_dict["timestamp"],
                     "metrics": metrics_dict,
@@ -161,23 +313,23 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
                 state_path.parent.mkdir(parents=True, exist_ok=True)
                 state_path.write_text(json.dumps(state, indent=2))
 
+                # Dispatch shell hooks & alerts
                 for metric_name, severity in violations.items():
-                    value = utils.get_violation_value(metric_name, metrics_dict)
-                    if value is not None:
-                        results = dispatch_events(
-                            severity.value,
+                    value = utils.get_violation_value(metric_name, metrics_dict) or 1.0
+                    results = dispatch_events(
+                        severity.value,
+                        metric_name,
+                        value,
+                        config,
+                        metrics_dict,
+                    )
+                    if results:
+                        logger.info(
+                            "Events dispatched for %s=%s: %s",
                             metric_name,
-                            value,
-                            config,
-                            metrics_dict,
+                            severity.value,
+                            results,
                         )
-                        if results:
-                            logger.info(
-                                "Events dispatched for %s=%s: %s",
-                                metric_name,
-                                severity.value,
-                                results,
-                            )
 
                 # ── Memory Pressure Resolution ────────────────────────────
                 ram_avail = utils.get_violation_value("ram_available_mb", metrics_dict) or 9999.0
@@ -187,7 +339,6 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
                 if current_state != PressureState.NORMAL:
                     elapsed = time.time() - _last_snap_time
                     if elapsed >= process_snap_interval:
-                        snaps = fetch_all_processes(lightweight=False)
                         count = snapshot_processes_to_db(snaps, db)
                         if count:
                             logger.info("Collected %d process snapshots (pressure)", count)
@@ -196,7 +347,6 @@ def run_daemon(config_path: str | None = None, foreground: bool = False) -> None
                 else:
                     elapsed = time.time() - _last_normal_snap_time
                     if normal_snap_interval > 0 and elapsed >= normal_snap_interval:
-                        snaps = fetch_all_processes(lightweight=True)
                         count = snapshot_processes_to_db(snaps, db)
                         if count:
                             logger.debug("Collected %d lightweight snapshots (normal)", count)

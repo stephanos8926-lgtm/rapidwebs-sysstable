@@ -1,18 +1,16 @@
 """Tests for the sysstable monitor daemon core logic."""
-import pytest
 import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
-from src.sysstable.state_machine import PressureStateMachine, PressureState
-from src.sysstable.resolver import MemoryPressureResolver, ResolutionResult
 from src.sysstable.process_watch import (
+    KillListGenerator,
     NoKillManager,
     ProcessScorer,
-    KillListGenerator,
-    KillListEntry,
     ProcessSnapshot,
 )
-from src.sysstable.thresholds import evaluate_thresholds, Severity
+from src.sysstable.resolver import ResolutionResult
+from src.sysstable.state_machine import PressureState, PressureStateMachine
+from src.sysstable.thresholds import Severity, evaluate_thresholds
 
 
 class TestPressureStateMachine:
