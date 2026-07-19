@@ -2,7 +2,28 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
+
+try:
+    import blake3
+    _HAS_BLAKE3 = True
+except ImportError:
+    _HAS_BLAKE3 = False
+
+
+def blake3_hash(data: bytes | str) -> str:
+    """Compute a BLAKE3 (or BLAKE2b fallback) hash of data and return its hex string.
+
+    Optimized to use BLAKE3 instead of SHA256.
+    """
+    bdata = data.encode("utf-8") if isinstance(data, str) else data
+    if _HAS_BLAKE3:
+        try:
+            return blake3.blake3(bdata).hexdigest()
+        except Exception:  # noqa: S110
+            pass
+    return hashlib.blake2b(bdata, digest_size=32).hexdigest()
 
 
 def get_violation_value(metric_name: str, metrics: dict[str, Any]) -> float | None:

@@ -47,7 +47,9 @@ CREATE TABLE IF NOT EXISTS process_snapshots (
     io_read_bytes INTEGER,
     io_write_bytes INTEGER,
     status TEXT,
-    username TEXT
+    username TEXT,
+    num_fds INTEGER DEFAULT 0,
+    nice INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_snaps_pid_name ON process_snapshots(pid, name);
 CREATE INDEX IF NOT EXISTS idx_snaps_timestamp ON process_snapshots(timestamp_ns);
@@ -66,6 +68,17 @@ class MetricsDB:
         self.conn = sqlite3.connect(str(self.db_path))
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA_SQL)
+
+        # Seamless schema upgrades for newer columns
+        try:
+            self.conn.execute("ALTER TABLE process_snapshots ADD COLUMN num_fds INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            self.conn.execute("ALTER TABLE process_snapshots ADD COLUMN nice INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        self.conn.commit()
 
     def __enter__(self) -> MetricsDB:
         return self
@@ -182,11 +195,13 @@ class MetricsDB:
         count = 0
         now = time.time_ns()
         for snap in snapshots:
+            num_fds = getattr(snap, "num_fds", 0)
+            nice = getattr(snap, "nice", 0)
             self.conn.execute(
                 "INSERT INTO process_snapshots "
                 "(timestamp_ns, pid, name, cmdline, memory_rss_mb, memory_percent, "
-                " cpu_percent, io_read_bytes, io_write_bytes, status, username) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " cpu_percent, io_read_bytes, io_write_bytes, status, username, num_fds, nice) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     now,
                     snap.pid,
@@ -199,6 +214,8 @@ class MetricsDB:
                     snap.io_write_bytes,
                     snap.status,
                     snap.username,
+                    num_fds,
+                    nice,
                 ),
             )
             count += 1

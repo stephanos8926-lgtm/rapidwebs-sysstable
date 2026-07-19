@@ -37,6 +37,8 @@ class ProcessSnapshot:
     io_write_bytes: int
     status: str
     username: str
+    num_fds: int = 0
+    nice: int = 0
 
 
 @dataclass
@@ -90,6 +92,8 @@ def fetch_all_processes(
         "status",
         "create_time",
         "username",
+        "nice",
+        "num_fds",
     ]
 
     for proc in psutil.process_iter(attrs):
@@ -110,6 +114,19 @@ def fetch_all_processes(
             mem = pinfo.get("memory_info")
             io = pinfo.get("io_counters")
 
+            # Collect FDs and nice safely
+            num_fds = 0
+            try:
+                num_fds = proc.num_fds()
+            except (psutil.AccessDenied, psutil.NoSuchProcess, AttributeError):
+                num_fds = pinfo.get("num_fds", 0) or 0
+
+            nice = 0
+            try:
+                nice = proc.nice()
+            except (psutil.AccessDenied, psutil.NoSuchProcess, AttributeError):
+                nice = pinfo.get("nice", 0) or 0
+
             snap = ProcessSnapshot(
                 pid=pid,
                 name=str(pinfo.get("name", "?")),
@@ -122,6 +139,8 @@ def fetch_all_processes(
                 io_write_bytes=int(io.write_bytes) if io else 0,
                 status=str(pinfo.get("status", "?")),
                 username=str(pinfo.get("username", "?")),
+                num_fds=num_fds,
+                nice=nice,
             )
             snapshots.append(snap)
             collected += 1
